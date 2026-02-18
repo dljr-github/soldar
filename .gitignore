@@ -1,0 +1,12 @@
+.env
+seen.json
+screener.log
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.vscode/
+.idea/
