@@ -1,0 +1,74 @@
+{
+  "total_samples": 42738,
+  "splits": {
+    "train": {
+      "size": 29916,
+      "label_0": 5272,
+      "label_1": 24644,
+      "memetrans": 29040,
+      "sapienza": 876
+    },
+    "val": {
+      "size": 6411,
+      "label_0": 1129,
+      "label_1": 5282,
+      "memetrans": 6215,
+      "sapienza": 196
+    },
+    "test": {
+      "size": 6411,
+      "label_0": 1130,
+      "label_1": 5281,
+      "memetrans": 6215,
+      "sapienza": 196
+    }
+  },
+  "feature_columns": [
+    "volume_intensity",
+    "buy_sell_pressure",
+    "momentum",
+    "price_range",
+    "group2_holder_gini",
+    "group2_top1_pct",
+    "group2_top5_pct",
+    "group2_top10_pct",
+    "group2_dev_hold_pct",
+    "group3_tx_num",
+    "group3_trader_num",
+    "group3_wash_ratio",
+    "group3_buy_num",
+    "group3_sell_num",
+    "group3_avg_buy_vol",
+    "group3_avg_sell_vol",
+    "group4_holder_gini",
+    "group4_cluster_num",
+    "group4_cluster_holder_ratio",
+    "group4_top1_pct",
+    "group4_top5_pct"
+  ],
+  "aligned_features": [
+    "volume_intensity",
+    "buy_sell_pressure",
+    "momentum",
+    "price_range"
+  ],
+  "memetrans_only_features": [
+    "group2_holder_gini",
+    "group2_top1_pct",
+    "group2_top5_pct",
+    "group2_top10_pct",
+    "group2_dev_hold_pct",
+    "group3_tx_num",
+    "group3_trader_num",
+    "group3_wash_ratio",
+    "group3_buy_num",
+    "group3_sell_num",
+    "group3_avg_buy_vol",
+    "group3_avg_sell_vol",
+    "group4_holder_gini",
+    "group4_cluster_num",
+    "group4_cluster_holder_ratio",
+    "group4_top1_pct",
+    "group4_top5_pct"
+  ]
+}

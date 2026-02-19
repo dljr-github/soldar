@@ -1,0 +1,102 @@
+{
+  "sapienza_to_screener": {
+    "volume_spike_ratio": {
+      "screener_equiv": "liq_to_mcap_ratio",
+      "memetrans_equiv": [
+        "group3_buy_vol",
+        "group3_sell_vol"
+      ],
+      "description": "Volume concentration / spike indicator"
+    },
+    "max_rush_order_spike": {
+      "screener_equiv": "candles_up_pct",
+      "memetrans_equiv": [
+        "group3_buy_num",
+        "group3_sell_num",
+        "group3_sell_pressure"
+      ],
+      "description": "Buy pressure / order imbalance indicator"
+    },
+    "avg_volume_trend": {
+      "screener_equiv": "price_velocity",
+      "memetrans_equiv": [
+        "group3_tx_per_sec",
+        "group3_avg_buy_vol"
+      ],
+      "description": "Momentum / acceleration of trading activity"
+    },
+    "price_volatility": {
+      "screener_equiv": "high_low_range_pct",
+      "memetrans_equiv": [
+        "group1_price"
+      ],
+      "description": "Price dispersion / range indicator"
+    },
+    "time_of_day_sin": {
+      "screener_equiv": null,
+      "memetrans_equiv": [
+        "group1_migrate_hour"
+      ],
+      "description": "Cyclical time encoding (sin component)"
+    },
+    "time_of_day_cos": {
+      "screener_equiv": null,
+      "memetrans_equiv": [
+        "group1_migrate_hour"
+      ],
+      "description": "Cyclical time encoding (cos component)"
+    }
+  },
+  "memetrans_to_screener": {
+    "group3_sell_pressure": {
+      "screener_equiv": "candles_up_pct",
+      "description": "Sell pressure \u2248 inverse of candles_up ratio"
+    },
+    "group3_tx_per_sec": {
+      "screener_equiv": "vol_per_min_T",
+      "description": "Transaction frequency \u2248 volume rate"
+    },
+    "group2_holder_gini": {
+      "screener_equiv": "liq_to_mcap_ratio",
+      "description": "Holder concentration \u2248 liquidity concentration"
+    },
+    "group1_price": {
+      "screener_equiv": "price_change_T_pct",
+      "description": "Price level / change from listing"
+    },
+    "group3_buy_vol": {
+      "screener_equiv": "vol_per_min_T",
+      "description": "Buy volume \u2248 total volume rate"
+    },
+    "group2_top1_pct": {
+      "screener_equiv": "liq_to_mcap_ratio",
+      "description": "Top holder concentration \u2248 concentration ratio"
+    }
+  },
+  "aligned_feature_pairs": [
+    {
+      "sapienza": "volume_spike_ratio",
+      "memetrans_primary": "group3_buy_vol",
+      "screener": "vol_per_min_T",
+      "concept": "volume_intensity"
+    },
+    {
+      "sapienza": "max_rush_order_spike",
+      "memetrans_primary": "group3_sell_pressure",
+      "screener": "candles_up_pct",
+      "concept": "buy_sell_pressure"
+    },
+    {
+      "sapienza": "avg_volume_trend",
+      "memetrans_primary": "group3_tx_per_sec",
+      "screener": "price_velocity",
+      "concept": "momentum"
+    },
+    {
+      "sapienza": "price_volatility",
+      "memetrans_primary": "group1_price",
+      "screener": "high_low_range_pct",
+      "concept": "price_range"
+    }
+  ]
+}

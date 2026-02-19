@@ -1,0 +1,29 @@
+{
+  "total_signals": 62850,
+  "unique_coins": 543,
+  "unique_channels": 209,
+  "date_range": {
+    "start": "2017-05-18",
+    "end": "2018-07-23"
+  },
+  "inter_signal_minutes": {
+    "mean": 2451.64,
+    "median": 167.98,
+    "p25": 5.57,
+    "p75": 1757.35,
+    "std": 9076.18
+  },
+  "signals_per_coin": {
+    "mean": 115.75,
+    "median": 63.0,
+    "max": 9027
+  },
+  "busiest_hours": {
+    "16": 4277,
+    "17": 3810,
+    "14": 3746,
+    "15": 3470,
+    "9": 3459
+  },
+  "note": "Inter-signal intervals measure time between consecutive Telegram pump signals for the same coin. Shorter intervals suggest coordinated pump campaigns. Busiest hours indicate when pump groups are most active."
+}
