@@ -354,6 +354,7 @@ def build_candidate_card(c: dict) -> str:
     lp_lock = c.get("legit_lp_locked_pct")
     top1    = c.get("legit_top1_pct")
     rc      = c.get("legit_rc_score")
+    ml_score = c.get("ml_score")
     dex_url = c.get("url") or f"https://dexscreener.com/solana/{address}"
 
     lvl, badge_cls, card_cls, score_cls = level_attrs(score)
@@ -375,6 +376,14 @@ def build_candidate_card(c: dict) -> str:
         top1_pill = ""
 
     rc_str = f'<span class="mono" style="font-size:10px;color:#7d8590;">RC:{rc}</span>' if rc is not None else ""
+
+    # ML score badge
+    if ml_score is not None:
+        ml_pct = ml_score * 100
+        ml_cls = "pill-pass" if ml_pct >= 60 else ("pill-warn" if ml_pct >= 30 else "pill-fail")
+        ml_pill = f'<span class="pill {ml_cls}">ML {ml_pct:.0f}%</span>'
+    else:
+        ml_pill = ""
 
     # JS clipboard copy (works on localhost secure context)
     js_copy = (
@@ -411,6 +420,7 @@ def build_candidate_card(c: dict) -> str:
     {lp_pill}
     {top1_pill}
     {rc_str}
+    {ml_pill}
     {copy_btn}
     <a href="{dex_url}" target="_blank" class="dex-link">DexScreener ↗</a>
     <span class="ca-addr">{addr_short}</span>
@@ -735,6 +745,7 @@ with main_col:
                     "1h%":      fmt_pct(c.get("price_change_1h")),
                     "Vol/Liq":  f"{c.get('vol_liq_ratio', 0):.1f}x",
                     "Legit":    c.get("legit_verdict") or "—",
+                    "ML":       f"{c['ml_score']:.0%}" if c.get("ml_score") is not None else "—",
                 })
             st.dataframe(table_data, use_container_width=True, hide_index=True)
 
