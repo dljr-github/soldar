@@ -41,7 +41,7 @@ def _get_alert_level(score: int) -> tuple[str, str] | None:
     return None
 
 
-def format_alert(pair: dict[str, Any], result: dict[str, Any]) -> str | None:
+def format_alert(pair: dict[str, Any], result: dict[str, Any], legit: dict[str, Any] | None = None) -> str | None:
     """Format a Telegram alert message. Returns None if score is below threshold."""
     score = result["score"]
     level_info = _get_alert_level(score)
@@ -58,7 +58,10 @@ def format_alert(pair: dict[str, Any], result: dict[str, Any]) -> str | None:
     liq = (pair.get("liquidity") or {}).get("usd", 0) or 0
     mcap = pair.get("marketCap") or pair.get("fdv") or 0
 
-    vol_5m = (pair.get("volume") or {}).get("m5", 0) or 0
+    vol = pair.get("volume") or {}
+    vol_5m = vol.get("m5", 0) or 0
+    if vol_5m <= 0:
+        vol_5m = (vol.get("h1", 0) or 0) / 12
     vol_liq = vol_5m / liq if liq > 0 else 0
 
     pc = pair.get("priceChange") or {}
@@ -73,16 +76,48 @@ def format_alert(pair: dict[str, Any], result: dict[str, Any]) -> str | None:
     dex_name = pair.get("dexId", "unknown")
     dex_url = pair.get("url", "")
 
+    # Legitimacy section
+    legit_verdict = ""
+    legit_lines = ""
+    if legit:
+        verdict = legit.get("verdict", "?")
+        verdict_emoji = {"PASS": "✅", "WARN": "⚠️", "FAIL": "❌"}.get(verdict, "❓")
+        legit_verdict = f"{verdict_emoji} Legit check: *{verdict}*"
+        details = legit.get("details", {})
+        d_lines = []
+        top1 = details.get("top1_pct")
+        lp_lock = details.get("lp_locked_pct")
+        rc_score = details.get("rc_score")
+        social = details.get("social", {})
+        mint_ok = details.get("mint_revoked")
+        freeze_ok = details.get("freeze_revoked")
+        if mint_ok is not None:
+            d_lines.append(f"  {'✅' if mint_ok else '🚨'} Mint {'revoked' if mint_ok else 'NOT revoked'}")
+        if freeze_ok is not None:
+            d_lines.append(f"  {'✅' if freeze_ok else '🚨'} Freeze {'revoked' if freeze_ok else 'NOT revoked'}")
+        if top1 is not None:
+            d_lines.append(f"  {'✅' if top1 < 20 else ('⚠️' if top1 < 50 else '🚨')} Top holder: {top1:.1f}%")
+        if lp_lock is not None:
+            d_lines.append(f"  {'✅' if lp_lock >= 80 else ('⚠️' if lp_lock >= 50 else '🚨')} LP locked: {lp_lock:.0f}%")
+        if rc_score is not None:
+            d_lines.append(f"  {'✅' if rc_score < 500 else '⚠️'} RugCheck score: {rc_score}")
+        soc_found = [k for k, v in social.items() if v]
+        if soc_found:
+            d_lines.append(f"  🌐 Socials: {', '.join(soc_found)}")
+        else:
+            d_lines.append("  ⚠️ No socials found")
+        legit_lines = "\n".join(d_lines)
+
     msg = (
         f"{emoji} MEME ALERT [{level}]\n"
         f"\n"
-        f"\U0001fa99 {name} (${symbol})\n"
-        f"\U0001f4cd CA: `{address}`\n"
+        f"🪙 {name} (${symbol})\n"
+        f"📍 CA: `{address}`\n"
         f"\n"
-        f"\u23f0 Age: {_age_str(age_min)}\n"
-        f"\U0001f4a7 Liquidity: ${liq:,.0f}\n"
-        f"\U0001f4ca Market Cap: ${mcap:,.0f}\n"
-        f"\U0001f4c8 Vol/Liq: {vol_liq:.1f}x\n"
+        f"⏰ Age: {_age_str(age_min)}\n"
+        f"💧 Liquidity: ${liq:,.0f}\n"
+        f"📊 Market Cap: ${mcap:,.0f}\n"
+        f"📈 Vol/Liq: {vol_liq:.1f}x\n"
         f"\n"
         f"Price Change:\n"
         f"  5m: {p5m:+.1f}%\n"
@@ -90,13 +125,16 @@ def format_alert(pair: dict[str, Any], result: dict[str, Any]) -> str | None:
         f"  6h: {p6h:+.1f}%\n"
         f"\n"
         f"Transactions (5m):\n"
-        f"  \U0001f7e2 Buys: {buys} | \U0001f534 Sells: {sells}\n"
+        f"  🟢 Buys: {buys} | 🔴 Sells: {sells}\n"
         f"\n"
-        f"\u26a1 Score: {score}/100\n"
-        f"\U0001f517 DEX: {dex_name}\n"
-        f"\n"
-        f"[View on DexScreener]({dex_url})"
+        f"⚡ Score: {score}/100\n"
+        f"🔗 DEX: {dex_name}\n"
     )
+
+    if legit_verdict:
+        msg += f"\n{legit_verdict}\n{legit_lines}\n"
+
+    msg += f"\n[View on DexScreener]({dex_url})"
     return msg
 
 

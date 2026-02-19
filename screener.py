@@ -17,6 +17,7 @@ from tabulate import tabulate
 import config as cfg
 from alerts import format_alert, send_telegram
 from filters import apply_filters, load_seen, mark_seen, save_seen, should_alert
+from legitimacy import analyse as legit_analyse
 from signals import score_pair
 
 # ---------------------------------------------------------------------------
@@ -182,7 +183,24 @@ def process_cycle(dry_run: bool = False) -> None:
             log.debug("Already alerted %s at same or higher level", address[:8])
             continue
 
-        msg = format_alert(pair, result)
+        # Legitimacy check — hard reject blocks the alert entirely
+        base_sym = (pair.get("baseToken") or {}).get("symbol", "?")
+        log.info("Running legitimacy check for %s (%s)…", base_sym, address[:8])
+        legit = legit_analyse(pair)
+
+        if legit and legit.get("hard_reject"):
+            log.info(
+                "REJECTED %s — legitimacy FAIL: %s",
+                base_sym,
+                "; ".join(r for r in legit["reasons"] if "🚨" in r),
+            )
+            mark_seen(seen, address, score, level)  # mark so we don't re-check constantly
+            continue
+
+        verdict = (legit or {}).get("verdict", "UNKNOWN")
+        log.info("Legitimacy verdict for %s: %s", base_sym, verdict)
+
+        msg = format_alert(pair, result, legit)
         if msg:
             if dry_run:
                 print(f"\n{'='*60}")

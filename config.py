@@ -106,6 +106,20 @@ DEXSCREENER_SEARCH_URL = "https://api.dexscreener.com/latest/dex/search?q=solana
 DEXSCREENER_TOKEN_URL = "https://api.dexscreener.com/latest/dex/tokens/{address}"
 
 # ---------------------------------------------------------------------------
+# Legitimacy / RugCheck thresholds
+# ---------------------------------------------------------------------------
+# Top single holder % — above REJECT = hard fail, above WARN = warning
+LEGIT_TOP1_HOLDER_REJECT = 50.0   # > 50% owned by one wallet → reject
+LEGIT_TOP1_HOLDER_WARN   = 20.0   # 20-50% → warn
+
+# LP lock % — below REJECT = hard fail, below WARN = warning
+LEGIT_LP_LOCKED_REJECT = 50.0     # < 50% locked → reject
+LEGIT_LP_LOCKED_WARN   = 80.0     # 50-80% locked → warn
+
+# RugCheck risk score — higher is riskier
+LEGIT_RUGCHECK_SCORE_WARN = 800   # above this → warn (not hard reject)
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 LOG_FILE = "screener.log"
