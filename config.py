@@ -49,11 +49,17 @@ VOL_LIQ_THRESHOLDS = [
 ]
 VOL_LIQ_DEFAULT_POINTS = 0
 
-# Price Momentum (20 pts max)
+# Price Momentum (20 pts max total: 12 from 5m + 8 from 1h capped at 500%)
 MOMENTUM_5M_THRESHOLDS = [
-    (50, 20),
-    (20, 14),
-    (10,  8),
+    (50, 12),
+    (20, 8),
+    (10,  4),
+]
+MOMENTUM_1H_THRESHOLDS = [
+    (100, 8),   # 1h > 100% (capped at 500 internally)
+    (50,  5),
+    (20,  3),
+    (10,  1),
 ]
 MOMENTUM_DEFAULT_POINTS = 0
 MOMENTUM_BONUS = 3  # bonus if both 5m AND 1h are positive
@@ -86,9 +92,9 @@ MCAP_DEFAULT_POINTS = 0
 # Alert levels
 # ---------------------------------------------------------------------------
 ALERT_LEVELS = [
-    (85, "HOT",   "\U0001f534"),   # 🔴
-    (70, "WARM",  "\U0001f7e0"),   # 🟠
-    (55, "WATCH", "\U0001f7e1"),   # 🟡
+    (80, "HOT",   "\U0001f534"),   # 🔴
+    (65, "WARM",  "\U0001f7e0"),   # 🟠
+    (50, "WATCH", "\U0001f7e1"),   # 🟡
 ]
 
 # ---------------------------------------------------------------------------

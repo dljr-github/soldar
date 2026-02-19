@@ -25,10 +25,18 @@ def _score_age(age_min: float | None) -> int:
 
 
 def _score_vol_liq(pair: dict[str, Any]) -> int:
-    vol_5m = (pair.get("volume") or {}).get("m5", 0) or 0
+    vol = pair.get("volume") or {}
     liq = (pair.get("liquidity") or {}).get("usd", 0) or 0
     if liq <= 0:
         return 0
+    # Prefer 5m volume; fall back to h1/6 normalised to a 5m window
+    vol_5m = vol.get("m5", 0) or 0
+    if vol_5m <= 0:
+        vol_h1 = vol.get("h1", 0) or 0
+        vol_5m = vol_h1 / 12  # h1 → estimated 5m equivalent
+    if vol_5m <= 0:
+        vol_h6 = vol.get("h6", 0) or 0
+        vol_5m = vol_h6 / 72
     ratio = vol_5m / liq
     for threshold, pts in cfg.VOL_LIQ_THRESHOLDS:
         if ratio > threshold:
@@ -40,14 +48,27 @@ def _score_momentum(pair: dict[str, Any]) -> int:
     pc = pair.get("priceChange") or {}
     p5m = pc.get("m5", 0) or 0
     p1h = pc.get("h1", 0) or 0
-    score = cfg.MOMENTUM_DEFAULT_POINTS
+
+    # 5m momentum (up to 12 pts) — freshest signal
+    score_5m = cfg.MOMENTUM_DEFAULT_POINTS
     for threshold, pts in cfg.MOMENTUM_5M_THRESHOLDS:
         if p5m > threshold:
-            score = pts
+            score_5m = pts
             break
-    if p5m > 0 and p1h > 0:
-        score += cfg.MOMENTUM_BONUS
-    return score
+
+    # 1h momentum (up to 8 pts) — catching early movers
+    # Cap benefit at 500% — beyond that you've probably missed it
+    score_1h = cfg.MOMENTUM_DEFAULT_POINTS
+    p1h_capped = min(p1h, 500)
+    for threshold, pts in cfg.MOMENTUM_1H_THRESHOLDS:
+        if p1h_capped > threshold:
+            score_1h = pts
+            break
+
+    # Bonus if both directions agree (both positive)
+    bonus = cfg.MOMENTUM_BONUS if (p5m > 0 and p1h > 0) else 0
+
+    return score_5m + score_1h + bonus
 
 
 def _score_buy_pressure(pair: dict[str, Any]) -> int:
