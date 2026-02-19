@@ -149,6 +149,22 @@ class SlippageAugmenter:
 
         return augmented
 
+    def sample_exit_slippage(self, scenario: str | None = None) -> float:
+        """Sample exit slippage — typically 40% worse than entry.
+
+        Returns a fraction in [0.01, 0.60].
+        """
+        if scenario is None:
+            scenario = self.rng.choice(
+                list(SLIPPAGE_PROFILES.keys()),
+                p=[0.15, 0.45, 0.30, 0.10],  # ideal/typical/congested/sandwiched
+            )
+        _entry_lo, _entry_hi, exit_lo, exit_hi = SLIPPAGE_PROFILES[scenario]
+        base = float(self.rng.lognormal(
+            np.log(max((exit_lo + exit_hi) / 2, 1e-6)), 0.4
+        ))
+        return float(np.clip(base * 1.4, 0.01, 0.60))
+
     def augment_batch(self, episodes: list[Episode]) -> list[AugmentedEpisode]:
         """Augment a batch of episodes."""
         all_augmented: list[AugmentedEpisode] = []

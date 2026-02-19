@@ -92,6 +92,24 @@ def _get_json(url: str, retries: int = 2) -> Any:
     return None
 
 
+def get_current_price(token_mint: str) -> float | None:
+    """Fetch current USD price for a token from DexScreener."""
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{token_mint}"
+        data = _get_json(url)
+        if not data:
+            return None
+        pairs = data.get("pairs") or []
+        if not pairs:
+            return None
+        best = max(pairs, key=lambda p: (p.get("liquidity") or {}).get("usd", 0))
+        price_str = best.get("priceUsd")
+        return float(price_str) if price_str else None
+    except (ValueError, TypeError) as exc:
+        log.debug("Failed to fetch price for %s: %s", token_mint[:8], exc)
+        return None
+
+
 def _extract_solana_addresses_from_boosts(data: list[dict]) -> list[str]:
     """Return Solana token addresses from the boosts/profiles endpoint."""
     addrs: list[str] = []
@@ -467,6 +485,29 @@ def process_cycle(dry_run: bool = False) -> None:
                     "STOP LOSS CLOSED #%d %s: PnL $%.2f (%.1f%%)",
                     pos["id"], pos["symbol"], sell_result["pnl_usd"], sell_result["pnl_pct"],
                 )
+
+    # --- RL agent exit decisions for open positions ---
+    if _paper_trader is not None:
+        for pos in _position_manager.get_open_positions():
+            current_price = get_current_price(pos["token_mint"])
+            if current_price:
+                _position_manager.update_price(pos["id"], current_price)
+                action = _position_manager.get_rl_exit_action(pos["id"], current_price)
+                if action != "hold":
+                    exit_pct = {"exit_25": 25, "exit_50": 50, "exit_all": 100}[action]
+                    rl_model_path = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        "ml", "models", "ppo_exit_agent.zip",
+                    )
+                    reason = "rl_agent" if os.path.exists(rl_model_path) else "rule_based"
+                    sell_result = _paper_trader.simulate_sell(
+                        pos["id"], pct=exit_pct, reason=reason,
+                    )
+                    if sell_result["success"]:
+                        log.info(
+                            "Exit action on %s: %s (%s) PnL $%.2f",
+                            pos["symbol"], action, reason, sell_result["pnl_usd"],
+                        )
 
     # --- Exit signal detection for previously-alerted coins ---
     exit_alerts: list[dict] = []

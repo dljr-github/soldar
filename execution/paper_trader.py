@@ -106,7 +106,10 @@ class PaperTrader:
 
         # Update price before closing so PnL calc is accurate
         self.pm.update_price(position_id, fill_price)
-        result = self.pm.close_position(position_id, fill_price, reason, f"paper_sell_{position_id}")
+        result = self.pm.close_position(
+            position_id, fill_price, reason,
+            f"paper_sell_{position_id}", partial_pct=pct,
+        )
 
         log.info(
             "PAPER SELL #%d %s: @ $%s (slippage %.1f%%) PnL $%.2f (%.1f%%)",

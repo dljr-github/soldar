@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -624,8 +625,8 @@ for c in candidates:
 with main_col:
     rej_label = f"🚫 REJECTED ({len(hard_rejected)})" if hard_rejected else "🚫 REJECTED"
     ea_label  = f"🔥 LIVE ({len(filtered)})"
-    tab_live, tab_stats, tab_rejected, tab_positions = st.tabs(
-        [ea_label, "📊 STATS", rej_label, "💰 POSITIONS"]
+    tab_live, tab_stats, tab_rejected, tab_positions, tab_rl = st.tabs(
+        [ea_label, "📊 STATS", rej_label, "💰 POSITIONS", "🤖 RL TRAINING"]
     )
 
     # ── Tab: LIVE ─────────────────────────────────────────────────────────────
@@ -885,3 +886,160 @@ with main_col:
                     f'<div class="nodata">Error loading trades: {e}</div>',
                     unsafe_allow_html=True,
                 )
+
+    # ── Tab: RL TRAINING ─────────────────────────────────────────────────
+    with tab_rl:
+        PROJECT_ROOT = Path(__file__).parent
+        MODEL_PATH = PROJECT_ROOT / "ml" / "models" / "ppo_exit_agent.zip"
+        EVAL_PATH = PROJECT_ROOT / "ml" / "models" / "ppo_eval_results.json"
+        RL_LOGS_DIR = PROJECT_ROOT / "ml" / "models" / "rl_logs"
+
+        # --- Model status ---
+        st.markdown('<div class="sec-label">Model Status</div>', unsafe_allow_html=True)
+        if MODEL_PATH.exists():
+            stat = MODEL_PATH.stat()
+            size_kb = stat.st_size / 1024
+            mod_time = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+            age = datetime.now(timezone.utc) - mod_time
+            age_str = f"{age.days}d {age.seconds // 3600}h ago" if age.days else f"{age.seconds // 3600}h {(age.seconds % 3600) // 60}m ago"
+            st.markdown(f"""
+<div class="fpanel">
+  <div class="health-row">
+    <span class="health-lbl">Status</span>
+    <span class="health-val"><span class="dot-green"></span>Trained</span>
+  </div>
+  <div class="health-row">
+    <span class="health-lbl">Model file</span>
+    <span class="health-val mono">{MODEL_PATH.name} ({size_kb:.0f} KB)</span>
+  </div>
+  <div class="health-row">
+    <span class="health-lbl">Last modified</span>
+    <span class="health-val mono">{mod_time.strftime("%Y-%m-%d %H:%M UTC")}</span>
+  </div>
+  <div class="health-row">
+    <span class="health-lbl">Age</span>
+    <span class="health-val mono">{age_str}</span>
+  </div>
+</div>""", unsafe_allow_html=True)
+        else:
+            st.markdown("""
+<div class="fpanel">
+  <div class="health-row">
+    <span class="health-lbl">Status</span>
+    <span class="health-val"><span class="dot-yellow"></span>Model not trained yet</span>
+  </div>
+  <div class="health-row">
+    <span class="health-lbl">Fallback</span>
+    <span class="health-val mono">rule_based exits active</span>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+        # --- Training trigger ---
+        st.markdown('<div class="sec-label">Training</div>', unsafe_allow_html=True)
+        col_btn, col_info = st.columns([1, 2])
+        with col_btn:
+            if st.button("Start RL Training (background)", key="rl_train_btn"):
+                try:
+                    train_script = PROJECT_ROOT / "ml" / "rl_exit_agent.py"
+                    if train_script.exists():
+                        subprocess.Popen(
+                            ["python", str(train_script), "--train"],
+                            cwd=str(PROJECT_ROOT),
+                            stdout=open(str(PROJECT_ROOT / "ml" / "rl_train.log"), "w"),
+                            stderr=subprocess.STDOUT,
+                        )
+                        st.success("Training started in background. Check ml/rl_train.log for progress.")
+                    else:
+                        st.warning("ml/rl_exit_agent.py not found — RL training script not yet available.")
+                except Exception as exc:
+                    st.error(f"Failed to start training: {exc}")
+        with col_info:
+            st.markdown(f"""
+<div style="font-size:11px;color:#7d8590;padding-top:6px;">
+  <strong>Model path:</strong> <code>ml/models/ppo_exit_agent.zip</code><br>
+  <strong>Manual run:</strong> <code>python ml/rl_exit_agent.py --train</code><br>
+  <strong>Full pipeline:</strong> <code>scripts/train_all.sh</code>
+</div>""", unsafe_allow_html=True)
+
+        # --- Evaluation results ---
+        if EVAL_PATH.exists():
+            st.markdown('<div class="sec-label">Evaluation: RL vs Baselines</div>', unsafe_allow_html=True)
+            try:
+                with open(EVAL_PATH) as f:
+                    eval_data = json.load(f)
+                strategies = eval_data if isinstance(eval_data, list) else eval_data.get("strategies", [])
+                if strategies:
+                    st.dataframe(strategies, use_container_width=True, hide_index=True)
+                else:
+                    st.markdown('<div class="nodata">Evaluation data empty.</div>', unsafe_allow_html=True)
+            except Exception:
+                st.markdown('<div class="nodata">Error reading evaluation results.</div>', unsafe_allow_html=True)
+
+        # --- Reward curve ---
+        if RL_LOGS_DIR.exists():
+            st.markdown('<div class="sec-label">Training Reward Curve</div>', unsafe_allow_html=True)
+            log_files = sorted(RL_LOGS_DIR.glob("*.json"))
+            monitor_files = sorted(RL_LOGS_DIR.glob("*.monitor.csv"))
+
+            rewards_loaded = False
+            # Try JSON logs first
+            if log_files:
+                try:
+                    with open(log_files[-1]) as f:
+                        log_data = json.load(f)
+                    rewards = log_data if isinstance(log_data, list) else log_data.get("rewards", [])
+                    if rewards:
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(
+                            y=rewards,
+                            mode="lines",
+                            line=dict(color="#58a6ff", width=2),
+                            fill="tozeroy",
+                            fillcolor="rgba(88,166,255,0.08)",
+                            name="Eval Reward",
+                        ))
+                        dark_plotly_layout(fig, title="RL Eval Reward Over Training")
+                        fig.update_layout(
+                            title_font=dict(color="#7d8590", size=12),
+                            showlegend=False,
+                            xaxis_title="Evaluation Step",
+                            yaxis_title="Mean Reward",
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        rewards_loaded = True
+                except Exception:
+                    pass
+
+            # Try monitor CSV logs
+            if not rewards_loaded and monitor_files:
+                try:
+                    import pandas as pd
+                    df = pd.read_csv(monitor_files[-1], skiprows=1)
+                    if "r" in df.columns:
+                        window = min(20, len(df))
+                        rolling_reward = df["r"].rolling(window=window, min_periods=1).mean()
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(
+                            y=rolling_reward.tolist(),
+                            mode="lines",
+                            line=dict(color="#58a6ff", width=2),
+                            fill="tozeroy",
+                            fillcolor="rgba(88,166,255,0.08)",
+                            name="Rolling Reward",
+                        ))
+                        dark_plotly_layout(fig, title=f"Episode Reward (rolling {window})")
+                        fig.update_layout(
+                            title_font=dict(color="#7d8590", size=12),
+                            showlegend=False,
+                            xaxis_title="Episode",
+                            yaxis_title="Reward",
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        rewards_loaded = True
+                except Exception:
+                    pass
+
+            if not rewards_loaded:
+                st.markdown('<div class="nodata">No reward data found in rl_logs/.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="nodata">No training logs yet. Train the model to see reward curves.</div>', unsafe_allow_html=True)

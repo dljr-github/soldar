@@ -9,6 +9,11 @@ from datetime import datetime, timezone
 
 import config as cfg
 
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
 log = logging.getLogger("execution.positions")
 
 DB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
@@ -205,3 +210,82 @@ class PositionManager:
                         pos["id"], pos["symbol"], pnl_pct, cfg.HARD_STOP_LOSS_PCT,
                     )
         return triggered
+
+    # ------------------------------------------------------------------
+    # Position lookup
+    # ------------------------------------------------------------------
+
+    def get_position(self, position_id: int) -> dict | None:
+        """Return a single position as a dict, or None if not found."""
+        row = self.conn.execute(
+            "SELECT * FROM positions WHERE id = ?", (position_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # RL agent exit decisions
+    # ------------------------------------------------------------------
+
+    def get_rl_exit_action(self, position_id: int, current_price: float) -> str:
+        """
+        Query RL agent for exit decision on an open position.
+        Returns: 'hold' | 'exit_25' | 'exit_50' | 'exit_all'
+        Falls back to rule-based if RL model not available.
+        """
+        try:
+            from stable_baselines3 import PPO
+
+            if np is None:
+                return self._rule_based_exit(position_id, current_price)
+
+            model_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "ml", "models", "ppo_exit_agent.zip",
+            )
+            if not os.path.exists(model_path):
+                return self._rule_based_exit(position_id, current_price)
+
+            # Lazy load model
+            if not hasattr(self, "_ppo_model") or self._ppo_model is None:
+                self._ppo_model = PPO.load(model_path)
+
+            pos = self.get_position(position_id)
+            if pos is None:
+                return "hold"
+
+            entry_price = pos["entry_price"]
+            entry_time = datetime.fromisoformat(pos["entry_time"])
+            time_held = (datetime.now(timezone.utc) - entry_time).total_seconds() / 60.0
+            price_ratio = current_price / entry_price if entry_price > 0 else 1.0
+
+            obs = np.array([
+                min(price_ratio, 20.0),
+                min(time_held / 120.0, 1.0),
+                1.0,                    # vol_ratio placeholder
+                0.5,                    # buy_sell_ratio neutral default
+                0.0,                    # realized_pnl (0 for open)
+                price_ratio - 1.0,      # simple momentum estimate
+            ], dtype=np.float32)
+
+            action, _ = self._ppo_model.predict(obs, deterministic=True)
+            return {0: "hold", 1: "exit_25", 2: "exit_50", 3: "exit_all"}[int(action)]
+
+        except Exception as exc:
+            log.debug("RL exit fallback for pos #%d: %s", position_id, exc)
+            return self._rule_based_exit(position_id, current_price)
+
+    def _rule_based_exit(self, position_id: int, current_price: float) -> str:
+        """Fallback rule-based exit logic."""
+        pos = self.get_position(position_id)
+        if pos is None:
+            return "hold"
+        entry_price = pos["entry_price"]
+        pct = (current_price / entry_price - 1) * 100 if entry_price > 0 else 0
+
+        if pct <= -40:
+            return "exit_all"   # stop loss
+        if pct >= 500:
+            return "exit_all"   # full exit at 6x
+        if pct >= 200:
+            return "exit_50"    # take half at 3x
+        return "hold"
