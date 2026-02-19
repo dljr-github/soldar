@@ -6,9 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import signal
 import sys
+import tempfile
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -47,6 +50,13 @@ def _handle_signal(signum: int, frame: Any) -> None:
 
 signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
+
+# ---------------------------------------------------------------------------
+# State file for dashboard
+# ---------------------------------------------------------------------------
+STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+STATE_FILE = os.path.join(STATE_DIR, "state.json")
+_cycle_count = 0
 
 # ---------------------------------------------------------------------------
 # API fetchers
@@ -134,6 +144,129 @@ def fetch_candidates() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# State file writer
+# ---------------------------------------------------------------------------
+
+def _load_prior_state() -> dict:
+    """Load existing state.json to preserve rolling history."""
+    try:
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _write_state(
+    pairs_total: int,
+    results: list[tuple[dict, dict]],
+    hard_rejected: list[dict],
+) -> None:
+    """Atomically write data/state.json with current cycle data."""
+    global _cycle_count
+    _cycle_count += 1
+    now = datetime.now(timezone.utc).isoformat()
+
+    prior = _load_prior_state()
+    cycle_history = prior.get("cycle_history", [])
+    prior_rejected = prior.get("hard_rejected", [])
+
+    # Build candidate list from scored results
+    prior_candidates = {
+        c["address"]: c for c in prior.get("candidates", [])
+    }
+    candidates = []
+    for pair, result in results:
+        base = pair.get("baseToken") or {}
+        liq = (pair.get("liquidity") or {}).get("usd", 0) or 0
+        mcap = pair.get("marketCap") or pair.get("fdv") or 0
+        pc = pair.get("priceChange") or {}
+        txns_5m = (pair.get("txns") or {}).get("m5") or {}
+        vol = pair.get("volume") or {}
+        vol_liq = round(vol.get("h1", 0) / liq, 1) if liq else 0
+
+        level_info = _get_level(result["score"])
+        level = level_info[0] if level_info else None
+
+        # Legitimacy data stored during cycle
+        legit = result.get("legit") or {}
+        details = legit.get("details") or {}
+        social = details.get("social") or {}
+        socials = [k for k in ("website", "twitter", "telegram") if social.get(k)]
+
+        # first_seen: use prior state if available, else now
+        addr = base.get("address", "")
+        first_seen = prior_candidates.get(addr, {}).get("first_seen", now)
+
+        candidates.append({
+            "symbol": base.get("symbol", "?"),
+            "name": base.get("name", "?"),
+            "address": addr,
+            "score": result["score"],
+            "level": level,
+            "age_minutes": round(result.get("age_minutes") or 0, 1),
+            "liquidity_usd": round(liq, 2),
+            "mcap_usd": round(mcap, 2),
+            "vol_liq_ratio": vol_liq,
+            "price_change_5m": round(pc.get("m5", 0) or 0, 1),
+            "price_change_1h": round(pc.get("h1", 0) or 0, 1),
+            "price_change_6h": round(pc.get("h6", 0) or 0, 1),
+            "buys_5m": txns_5m.get("buys", 0) or 0,
+            "sells_5m": txns_5m.get("sells", 0) or 0,
+            "dex": pair.get("dexId", ""),
+            "url": pair.get("url", ""),
+            "legit_verdict": legit.get("verdict"),
+            "legit_hard_rejected": legit.get("hard_reject", False),
+            "legit_top1_pct": details.get("top1_pct"),
+            "legit_lp_locked_pct": details.get("lp_locked_pct"),
+            "legit_rc_score": details.get("rc_score"),
+            "legit_mint_revoked": details.get("mint_revoked"),
+            "legit_freeze_revoked": details.get("freeze_revoked"),
+            "legit_socials": socials,
+            "legit_reasons": legit.get("reasons", []),
+            "first_seen": first_seen,
+        })
+
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    top_score = candidates[0]["score"] if candidates else 0
+
+    # Append to cycle history (rolling last 100)
+    cycle_history.append({
+        "timestamp": now,
+        "scanned": pairs_total,
+        "passed": len(results),
+        "top_score": top_score,
+    })
+    cycle_history = cycle_history[-100:]
+
+    # Merge hard_rejected (rolling last 50)
+    all_rejected = prior_rejected + hard_rejected
+    all_rejected = all_rejected[-50:]
+
+    state = {
+        "last_updated": now,
+        "cycle_count": _cycle_count,
+        "candidates_scanned": pairs_total,
+        "passed_filters": len(results),
+        "top_score": top_score,
+        "candidates": candidates,
+        "hard_rejected": all_rejected,
+        "cycle_history": cycle_history,
+    }
+
+    os.makedirs(STATE_DIR, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=STATE_DIR, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp_path, STATE_FILE)
+        log.info("Wrote %s (%d candidates)", STATE_FILE, len(candidates))
+    except Exception:
+        log.exception("Failed to write state file")
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+# ---------------------------------------------------------------------------
 # Processing
 # ---------------------------------------------------------------------------
 
@@ -153,6 +286,7 @@ def process_cycle(dry_run: bool = False) -> None:
 
     seen = load_seen()
     results: list[tuple[dict, dict]] = []
+    hard_rejected: list[dict] = []
 
     for pair in pairs:
         # Hard filters
@@ -194,8 +328,17 @@ def process_cycle(dry_run: bool = False) -> None:
                 base_sym,
                 "; ".join(r for r in legit["reasons"] if "🚨" in r),
             )
+            hard_rejected.append({
+                "symbol": base_sym,
+                "address": address,
+                "reasons": [r for r in legit["reasons"] if "🚨" in r],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
             mark_seen(seen, address, score, level)  # mark so we don't re-check constantly
             continue
+
+        # Attach legit data to result for state.json
+        result["legit"] = legit
 
         verdict = (legit or {}).get("verdict", "UNKNOWN")
         log.info("Legitimacy verdict for %s: %s", base_sym, verdict)
@@ -216,6 +359,9 @@ def process_cycle(dry_run: bool = False) -> None:
                 mark_seen(seen, address, score, level)
 
     save_seen(seen)
+
+    # Write dashboard state file
+    _write_state(len(pairs), results, hard_rejected)
 
     # Console summary table
     results.sort(key=lambda r: r[1]["score"], reverse=True)

@@ -1,6 +1,7 @@
 .env
 seen.json
 screener.log
+data/
 __pycache__/
 *.pyc
 *.pyo
