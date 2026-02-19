@@ -19,6 +19,8 @@ from tabulate import tabulate
 
 import config as cfg
 from alerts import format_alert, send_telegram
+from execution.paper_trader import PaperTrader
+from execution.position_manager import PositionManager
 from filters import apply_filters, load_seen, mark_seen, save_seen, should_alert
 from legitimacy import analyse as legit_analyse
 from signals import _get_vol_liq_ratio, score_exit, score_pair
@@ -50,6 +52,12 @@ def _handle_signal(signum: int, frame: Any) -> None:
 
 signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
+
+# ---------------------------------------------------------------------------
+# Paper / live trading
+# ---------------------------------------------------------------------------
+_position_manager = PositionManager()
+_paper_trader = PaperTrader() if cfg.PAPER_TRADING_ENABLED else None
 
 # ---------------------------------------------------------------------------
 # State file for dashboard
@@ -390,6 +398,48 @@ def process_cycle(dry_run: bool = False) -> None:
                           first_seen_price_change_1h=fs_p1h,
                           first_seen_vol_liq=fs_vliq,
                           first_seen_liq=fs_liq)
+
+        # --- Paper trading trigger ---
+        if (
+            score >= cfg.MIN_SCORE_TO_TRADE
+            and legit is not None
+            and not legit.get("hard_reject")
+            and cfg.PAPER_TRADING_ENABLED
+            and _paper_trader is not None
+        ):
+            can_open, reason = _position_manager.can_open_position(cfg.MAX_POSITION_SIZE_USD)
+            if can_open:
+                pool_addr = pair.get("pairAddress", "")
+                buy_result = _paper_trader.simulate_buy(
+                    symbol=base_sym,
+                    token_mint=address,
+                    pool_address=pool_addr,
+                    amount_usd=cfg.MAX_POSITION_SIZE_USD,
+                    score=score,
+                    legit_verdict=verdict,
+                )
+                if buy_result["success"]:
+                    log.info(
+                        "PAPER TRADE OPENED: %s score=%d pos=#%d @ $%s (slippage %.1f%%)",
+                        base_sym, score, buy_result["position_id"],
+                        buy_result["fill_price"], buy_result["slippage_pct"],
+                    )
+                else:
+                    log.warning("Paper buy failed for %s: %s", base_sym, buy_result.get("error"))
+            else:
+                log.info("Cannot open position for %s: %s", base_sym, reason)
+
+    # --- Update open position prices and check stop losses ---
+    if _paper_trader is not None:
+        _paper_trader.update_all_prices()
+        triggered = _position_manager.check_stop_losses()
+        for pos in triggered:
+            sell_result = _paper_trader.simulate_sell(pos["id"], reason="stop_loss")
+            if sell_result["success"]:
+                log.warning(
+                    "STOP LOSS CLOSED #%d %s: PnL $%.2f (%.1f%%)",
+                    pos["id"], pos["symbol"], sell_result["pnl_usd"], sell_result["pnl_pct"],
+                )
 
     # --- Exit signal detection for previously-alerted coins ---
     exit_alerts: list[dict] = []

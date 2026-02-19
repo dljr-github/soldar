@@ -166,7 +166,7 @@ def score_exit(pair: dict[str, Any], seen_entry: dict[str, Any]) -> dict[str, An
         signals.append(("Sell pressure dominant", "HIGH"))
 
     # 2. Volume collapse — vol/liq dropped >70% vs first alert
-    first_vol_liq = seen_entry.get("first_seen_vol_liq", 0)
+    first_vol_liq = seen_entry.get("first_seen_vol_liq") or 0
     if first_vol_liq > 0:
         current_vol_liq = _get_vol_liq_ratio(pair)
         drop_pct = (first_vol_liq - current_vol_liq) / first_vol_liq
@@ -174,12 +174,12 @@ def score_exit(pair: dict[str, Any], seen_entry: dict[str, Any]) -> dict[str, An
             signals.append(("Volume drying up", "MEDIUM"))
 
     # 3. Price reversal — sharp 5m drop after a prior pump
-    first_p1h = seen_entry.get("first_seen_price_change_1h", 0)
+    first_p1h = seen_entry.get("first_seen_price_change_1h") or 0
     if p5m < -15 and first_p1h > 20:
         signals.append(("Sharp 5m reversal after pump", "HIGH"))
 
     # 4. Liquidity drain — liquidity dropped >40% from first-seen
-    first_liq = seen_entry.get("first_seen_liq", 0)
+    first_liq = seen_entry.get("first_seen_liq") or 0
     if first_liq > 0 and liq > 0:
         liq_drop = (first_liq - liq) / first_liq
         if liq_drop > 0.40:

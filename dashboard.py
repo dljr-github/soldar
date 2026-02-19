@@ -161,8 +161,8 @@ for c in candidates:
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_live, tab_stats, tab_rejected = st.tabs(
-    ["🔥 Live Candidates", "📊 Stats", "🚫 Rejected"]
+tab_live, tab_stats, tab_rejected, tab_positions = st.tabs(
+    ["🔥 Live Candidates", "📊 Stats", "🚫 Rejected", "💰 Positions"]
 )
 
 
@@ -361,3 +361,117 @@ with tab_rejected:
                 }
             )
         st.dataframe(rows, use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
+# Tab 4 — Positions
+# ---------------------------------------------------------------------------
+with tab_positions:
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+
+    TRADES_DB = Path(__file__).parent / "data" / "trades.db"
+
+    if not TRADES_DB.exists():
+        st.info("No trades database yet — paper trading hasn't executed any trades.")
+    else:
+        _conn = sqlite3.connect(str(TRADES_DB))
+        _conn.row_factory = sqlite3.Row
+
+        # --- Open positions ---
+        open_rows = _conn.execute(
+            "SELECT * FROM positions WHERE status = 'open' ORDER BY entry_time DESC"
+        ).fetchall()
+
+        st.markdown("### Open Positions")
+        if not open_rows:
+            st.info("No open positions.")
+        else:
+            open_data = []
+            for r in open_rows:
+                entry_price = r["entry_price"] or 0
+                current_price = r["current_price"] or 0
+                pnl_pct = ((current_price - entry_price) / entry_price * 100) if entry_price else 0
+                # Time held
+                try:
+                    entry_dt = datetime.fromisoformat(r["entry_time"])
+                    held = datetime.now(timezone.utc) - entry_dt
+                    held_str = f"{held.seconds // 3600}h {(held.seconds % 3600) // 60}m"
+                    if held.days > 0:
+                        held_str = f"{held.days}d {held_str}"
+                except (ValueError, TypeError):
+                    held_str = "?"
+                open_data.append({
+                    "ID": r["id"],
+                    "Symbol": r["symbol"],
+                    "Entry Price": f"${entry_price:.8f}",
+                    "Current Price": f"${current_price:.8f}",
+                    "PnL%": f"{pnl_pct:+.1f}%",
+                    "Size": f"${r['entry_amount_usd']:.2f}",
+                    "Time Held": held_str,
+                    "Score": r["screener_score"],
+                })
+            st.dataframe(open_data, use_container_width=True)
+
+        # --- Recent closed trades ---
+        st.markdown("### Recent Closed Trades")
+        closed_rows = _conn.execute(
+            """SELECT t.*, p.symbol, p.entry_price, p.entry_amount_usd
+               FROM trades t
+               JOIN positions p ON t.position_id = p.id
+               WHERE t.action != 'buy'
+               ORDER BY t.timestamp DESC
+               LIMIT 20"""
+        ).fetchall()
+
+        if not closed_rows:
+            st.info("No closed trades yet.")
+        else:
+            closed_data = []
+            for r in closed_rows:
+                closed_data.append({
+                    "Pos#": r["position_id"],
+                    "Symbol": r["symbol"],
+                    "Action": r["action"],
+                    "Entry": f"${r['entry_price']:.8f}",
+                    "Exit": f"${r['price']:.8f}",
+                    "PnL $": f"${r['pnl_usd']:+.2f}",
+                    "PnL %": f"{r['pnl_pct']:+.1f}%",
+                    "Reason": r["exit_reason"] or "",
+                    "Time": r["timestamp"],
+                })
+            st.dataframe(closed_data, use_container_width=True)
+
+        # --- Summary stats ---
+        st.markdown("### Trading Summary")
+        all_sells = _conn.execute(
+            "SELECT pnl_usd, pnl_pct, timestamp FROM trades WHERE action != 'buy'"
+        ).fetchall()
+
+        total_trades = len(all_sells)
+        if total_trades > 0:
+            pnls = [r["pnl_usd"] for r in all_sells]
+            wins = sum(1 for p in pnls if p > 0)
+            total_pnl = sum(pnls)
+
+            # Daily PnL
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            daily_sells = _conn.execute(
+                "SELECT COALESCE(SUM(pnl_usd), 0) FROM trades WHERE action != 'buy' AND timestamp >= ?",
+                (today_str,),
+            ).fetchone()
+            daily_pnl = daily_sells[0]
+
+            s1, s2, s3, s4 = st.columns(4)
+            with s1:
+                st.metric("Total Trades", total_trades)
+            with s2:
+                st.metric("Win Rate", f"{wins / total_trades * 100:.1f}%")
+            with s3:
+                st.metric("Total PnL", f"${total_pnl:+.2f}")
+            with s4:
+                st.metric("Daily PnL", f"${daily_pnl:+.2f}")
+        else:
+            st.info("No completed trades to summarize.")
+
+        _conn.close()

@@ -123,6 +123,17 @@ LEGIT_LP_LOCKED_WARN   = 80.0     # 50-80% locked → warn
 LEGIT_RUGCHECK_SCORE_WARN = 800   # above this → warn (not hard reject)
 
 # ---------------------------------------------------------------------------
+# Paper / Live Trading
+# ---------------------------------------------------------------------------
+PAPER_TRADING_ENABLED = True
+LIVE_TRADING_ENABLED = False
+MIN_SCORE_TO_TRADE = 80
+MAX_POSITION_SIZE_USD = 50.0
+MAX_CONCURRENT_POSITIONS = 3
+HARD_STOP_LOSS_PCT = -40.0
+MAX_DAILY_LOSS_USD = -150.0
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 LOG_FILE = "screener.log"
