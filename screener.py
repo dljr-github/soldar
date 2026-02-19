@@ -24,6 +24,8 @@ from execution.position_manager import PositionManager
 from filters import apply_filters, load_seen, mark_seen, save_seen, should_alert
 from legitimacy import analyse as legit_analyse
 from ml.outcome_tracker import OutcomeTracker
+from ml.predict import predict_pump_probability
+from ml.pumpfun import scan_pumpfun
 from signals import _get_vol_liq_ratio, score_exit, score_pair
 
 # ---------------------------------------------------------------------------
@@ -176,6 +178,7 @@ def _write_state(
     hard_rejected: list[dict],
     exit_alerts: list[dict] | None = None,
     outcome_stats: dict | None = None,
+    pumpfun_candidates: list[dict] | None = None,
 ) -> None:
     """Atomically write data/state.json with current cycle data."""
     global _cycle_count
@@ -239,8 +242,18 @@ def _write_state(
             "legit_freeze_revoked": details.get("freeze_revoked"),
             "legit_socials": socials,
             "legit_reasons": legit.get("reasons", []),
+            "ml_score": result.get("ml_score"),
+            "source": "dexscreener",
             "first_seen": first_seen,
         })
+
+    # Merge Pump.fun candidates (avoid duplicates by address)
+    existing_addrs = {c["address"] for c in candidates}
+    for pf in pumpfun_candidates or []:
+        if pf["address"] not in existing_addrs:
+            pf["first_seen"] = pf.get("first_seen") or now
+            candidates.append(pf)
+            existing_addrs.add(pf["address"])
 
     candidates.sort(key=lambda c: c["score"], reverse=True)
     top_score = candidates[0]["score"] if candidates else 0
@@ -337,6 +350,12 @@ def process_cycle(dry_run: bool = False) -> None:
 
         # Score
         result = score_pair(pair)
+
+        # ML prediction (additive — doesn't block alerts)
+        ml_score = predict_pump_probability(pair)
+        if ml_score >= 0:
+            result["ml_score"] = round(ml_score, 4)
+
         results.append((pair, result))
 
         # Alert logic
@@ -494,6 +513,18 @@ def process_cycle(dry_run: bool = False) -> None:
 
     save_seen(seen)
 
+    # --- Pump.fun direct integration ---
+    pumpfun_candidates: list[dict] = []
+    if cfg.PUMPFUN_ENABLED:
+        try:
+            pumpfun_candidates = scan_pumpfun(
+                limit=50,
+                max_age_minutes=cfg.PUMPFUN_MAX_AGE_MINUTES,
+            )
+            log.info("Pump.fun: %d candidates scored", len(pumpfun_candidates))
+        except Exception:
+            log.exception("Pump.fun scan error (non-fatal)")
+
     # --- Outcome tracking (ML training labels) ---
     try:
         _outcome_tracker.run_checkpoint()
@@ -503,7 +534,8 @@ def process_cycle(dry_run: bool = False) -> None:
         outcome_stats = {}
 
     # Write dashboard state file
-    _write_state(len(pairs), results, hard_rejected, exit_alerts, outcome_stats)
+    _write_state(len(pairs), results, hard_rejected, exit_alerts, outcome_stats,
+                 pumpfun_candidates=pumpfun_candidates)
 
     # Console summary table
     results.sort(key=lambda r: r[1]["score"], reverse=True)

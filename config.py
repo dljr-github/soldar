@@ -123,6 +123,12 @@ LEGIT_LP_LOCKED_WARN   = 80.0     # 50-80% locked → warn
 LEGIT_RUGCHECK_SCORE_WARN = 800   # above this → warn (not hard reject)
 
 # ---------------------------------------------------------------------------
+# Pump.fun integration
+# ---------------------------------------------------------------------------
+PUMPFUN_ENABLED = True
+PUMPFUN_MAX_AGE_MINUTES = 30  # Only score tokens younger than this
+
+# ---------------------------------------------------------------------------
 # Paper / Live Trading
 # ---------------------------------------------------------------------------
 PAPER_TRADING_ENABLED = True
