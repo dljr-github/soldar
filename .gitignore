@@ -1,13 +1,29 @@
+# Credentials
 .env
-seen.json
-screener.log
+
+# Data (large files, generated locally)
 data/
+ml/raw/
+ml/data/
+ml/models/
+
+# Keep model evaluation reports (small)
+!ml/models/backtest_results.json
+!ml/models/ppo_eval_results.json
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
 *.egg-info/
-dist/
-build/
-.vscode/
-.idea/
+
+# Logs
+*.log
+screener.log
+
+# Research repos (cloned separately via download_data.sh)
+repos/
+
+# Conda
+.conda/
