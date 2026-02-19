@@ -21,7 +21,7 @@ import config as cfg
 from alerts import format_alert, send_telegram
 from filters import apply_filters, load_seen, mark_seen, save_seen, should_alert
 from legitimacy import analyse as legit_analyse
-from signals import score_pair
+from signals import _get_vol_liq_ratio, score_exit, score_pair
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -160,6 +160,7 @@ def _write_state(
     pairs_total: int,
     results: list[tuple[dict, dict]],
     hard_rejected: list[dict],
+    exit_alerts: list[dict] | None = None,
 ) -> None:
     """Atomically write data/state.json with current cycle data."""
     global _cycle_count
@@ -242,6 +243,22 @@ def _write_state(
     all_rejected = prior_rejected + hard_rejected
     all_rejected = all_rejected[-50:]
 
+    # Merge exit alerts — keep from prior state if no new ones this cycle
+    from datetime import timedelta
+    current_exits = exit_alerts if exit_alerts else []
+    prior_exits = prior.get("exit_alerts", [])
+    # Replace with current cycle's alerts; keep prior ones that aren't superseded
+    current_addrs = {e["address"] for e in current_exits}
+    merged_exits = current_exits + [
+        e for e in prior_exits if e["address"] not in current_addrs
+    ]
+    # Only keep exit alerts from the last 4 hours
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
+    merged_exits = [
+        e for e in merged_exits
+        if e.get("detected_at", "") > cutoff
+    ]
+
     state = {
         "last_updated": now,
         "cycle_count": _cycle_count,
@@ -250,6 +267,7 @@ def _write_state(
         "top_score": top_score,
         "candidates": candidates,
         "hard_rejected": all_rejected,
+        "exit_alerts": merged_exits,
         "cycle_history": cycle_history,
     }
 
@@ -343,6 +361,12 @@ def process_cycle(dry_run: bool = False) -> None:
         verdict = (legit or {}).get("verdict", "UNKNOWN")
         log.info("Legitimacy verdict for %s: %s", base_sym, verdict)
 
+        # Compute first-seen values for exit signal tracking
+        pc = pair.get("priceChange") or {}
+        fs_p1h = pc.get("h1", 0) or 0
+        fs_vliq = _get_vol_liq_ratio(pair)
+        fs_liq = (pair.get("liquidity") or {}).get("usd", 0) or 0
+
         msg = format_alert(pair, result, legit)
         if msg:
             if dry_run:
@@ -350,18 +374,70 @@ def process_cycle(dry_run: bool = False) -> None:
                 print(f"[DRY RUN] Would send alert:")
                 print(msg)
                 print(f"{'='*60}\n")
-                mark_seen(seen, address, score, level)
+                mark_seen(seen, address, score, level,
+                          first_seen_price_change_1h=fs_p1h,
+                          first_seen_vol_liq=fs_vliq,
+                          first_seen_liq=fs_liq)
             elif cfg.AUTO_ALERTS_ENABLED:
                 send_telegram(msg)
-                mark_seen(seen, address, score, level)
+                mark_seen(seen, address, score, level,
+                          first_seen_price_change_1h=fs_p1h,
+                          first_seen_vol_liq=fs_vliq,
+                          first_seen_liq=fs_liq)
             else:
                 log.info("AUTO_ALERTS_ENABLED=False — logged %s (score=%d, verdict=%s), no Telegram sent", base_sym, score, verdict)
-                mark_seen(seen, address, score, level)
+                mark_seen(seen, address, score, level,
+                          first_seen_price_change_1h=fs_p1h,
+                          first_seen_vol_liq=fs_vliq,
+                          first_seen_liq=fs_liq)
+
+    # --- Exit signal detection for previously-alerted coins ---
+    exit_alerts: list[dict] = []
+    # Build a lookup of current-cycle pair data by address
+    pair_by_addr: dict[str, dict] = {}
+    for pair, _result in results:
+        addr = (pair.get("baseToken") or {}).get("address", "")
+        if addr:
+            pair_by_addr[addr] = pair
+
+    for addr, entry in seen.items():
+        # Only check coins that were actually alerted (have an alert_level)
+        if not entry.get("alert_level"):
+            continue
+        # Need current pair data from this cycle
+        pair = pair_by_addr.get(addr)
+        if pair is None:
+            continue
+        exit_result = score_exit(pair, entry)
+        if exit_result["should_exit"]:
+            base = pair.get("baseToken") or {}
+            pc = pair.get("priceChange") or {}
+            symbol = base.get("symbol", "?")
+            log.warning(
+                "EXIT SIGNAL %s (%s): %s [%s] — signals: %s",
+                symbol, addr[:8],
+                exit_result["exit_reason"],
+                exit_result["urgency"],
+                ", ".join(exit_result["exit_signals"]),
+            )
+            exit_alerts.append({
+                "symbol": symbol,
+                "address": addr,
+                "exit_reason": exit_result["exit_reason"],
+                "urgency": exit_result["urgency"],
+                "all_signals": exit_result["exit_signals"],
+                "current_price_change_5m": round(pc.get("m5", 0) or 0, 1),
+                "current_price_change_1h": round(pc.get("h1", 0) or 0, 1),
+                "detected_at": datetime.now(timezone.utc).isoformat(),
+                "alerted_at": datetime.fromtimestamp(
+                    entry.get("alerted_at", 0), tz=timezone.utc
+                ).isoformat(),
+            })
 
     save_seen(seen)
 
     # Write dashboard state file
-    _write_state(len(pairs), results, hard_rejected)
+    _write_state(len(pairs), results, hard_rejected, exit_alerts)
 
     # Console summary table
     results.sort(key=lambda r: r[1]["score"], reverse=True)

@@ -48,12 +48,30 @@ def save_seen(seen: dict[str, Any]) -> None:
 
 
 def mark_seen(
-    seen: dict[str, Any], address: str, score: int, level: str
+    seen: dict[str, Any],
+    address: str,
+    score: int,
+    level: str,
+    *,
+    first_seen_price_change_1h: float | None = None,
+    first_seen_vol_liq: float | None = None,
+    first_seen_liq: float | None = None,
 ) -> None:
+    prev = seen.get(address) or {}
     seen[address] = {
         "score": score,
         "alerted_at": time.time(),
         "alert_level": level,
+        # Preserve first-seen values from original alert; only set on first call
+        "first_seen_price_change_1h": prev.get("first_seen_price_change_1h")
+            if prev.get("first_seen_price_change_1h") is not None
+            else first_seen_price_change_1h,
+        "first_seen_vol_liq": prev.get("first_seen_vol_liq")
+            if prev.get("first_seen_vol_liq") is not None
+            else first_seen_vol_liq,
+        "first_seen_liq": prev.get("first_seen_liq")
+            if prev.get("first_seen_liq") is not None
+            else first_seen_liq,
     }
 
 

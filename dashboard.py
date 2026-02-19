@@ -54,6 +54,7 @@ if state is None:
 candidates: list[dict] = state.get("candidates", [])
 hard_rejected: list[dict] = state.get("hard_rejected", [])
 cycle_history: list[dict] = state.get("cycle_history", [])
+exit_alerts: list[dict] = state.get("exit_alerts", [])
 
 # Parse ISO timestamp to compute "X seconds ago"
 last_updated_str = state.get("last_updated", "")
@@ -169,6 +170,25 @@ tab_live, tab_stats, tab_rejected = st.tabs(
 # Tab 1 — Live Candidates
 # ---------------------------------------------------------------------------
 with tab_live:
+    # --- Exit Signals (shown at top when present) ---
+    if exit_alerts:
+        st.markdown("### 🚨 Exit Signals")
+        for ea in exit_alerts:
+            urgency = ea.get("urgency", "LOW")
+            symbol = ea.get("symbol", "?")
+            reason = ea.get("exit_reason", "")
+            all_sigs = ea.get("all_signals", [])
+            p5m = ea.get("current_price_change_5m", 0)
+            p1h = ea.get("current_price_change_1h", 0)
+            urgency_icon = {"HIGH": "🔴", "MEDIUM": "🟠", "LOW": "🟡"}.get(urgency, "⚪")
+            st.error(
+                f"**{urgency_icon} {urgency}** — **{symbol}**: {reason}  \n"
+                f"5m: {fmt_pct(p5m)} | 1h: {fmt_pct(p1h)}  \n"
+                f"All signals: {', '.join(all_sigs)}",
+                icon="🚨",
+            )
+        st.markdown("---")
+
     if not filtered:
         st.info("No candidates match current filters.")
     else:
