@@ -23,6 +23,7 @@ from execution.paper_trader import PaperTrader
 from execution.position_manager import PositionManager
 from filters import apply_filters, load_seen, mark_seen, save_seen, should_alert
 from legitimacy import analyse as legit_analyse
+from ml.outcome_tracker import OutcomeTracker
 from signals import _get_vol_liq_ratio, score_exit, score_pair
 
 # ---------------------------------------------------------------------------
@@ -58,6 +59,11 @@ signal.signal(signal.SIGTERM, _handle_signal)
 # ---------------------------------------------------------------------------
 _position_manager = PositionManager()
 _paper_trader = PaperTrader() if cfg.PAPER_TRADING_ENABLED else None
+
+# ---------------------------------------------------------------------------
+# Outcome tracker (ML training labels)
+# ---------------------------------------------------------------------------
+_outcome_tracker = OutcomeTracker()
 
 # ---------------------------------------------------------------------------
 # State file for dashboard
@@ -169,6 +175,7 @@ def _write_state(
     results: list[tuple[dict, dict]],
     hard_rejected: list[dict],
     exit_alerts: list[dict] | None = None,
+    outcome_stats: dict | None = None,
 ) -> None:
     """Atomically write data/state.json with current cycle data."""
     global _cycle_count
@@ -277,6 +284,7 @@ def _write_state(
         "hard_rejected": all_rejected,
         "exit_alerts": merged_exits,
         "cycle_history": cycle_history,
+        "outcome_stats": outcome_stats or {},
     }
 
     os.makedirs(STATE_DIR, exist_ok=True)
@@ -486,8 +494,16 @@ def process_cycle(dry_run: bool = False) -> None:
 
     save_seen(seen)
 
+    # --- Outcome tracking (ML training labels) ---
+    try:
+        _outcome_tracker.run_checkpoint()
+        outcome_stats = _outcome_tracker.get_stats()
+    except Exception:
+        log.exception("Outcome tracker error (non-fatal)")
+        outcome_stats = {}
+
     # Write dashboard state file
-    _write_state(len(pairs), results, hard_rejected, exit_alerts)
+    _write_state(len(pairs), results, hard_rejected, exit_alerts, outcome_stats)
 
     # Console summary table
     results.sort(key=lambda r: r[1]["score"], reverse=True)
