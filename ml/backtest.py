@@ -73,56 +73,57 @@ def prepare_X(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Rule-based scoring (approximate screener logic from available features)
 # ---------------------------------------------------------------------------
+def _step_score(values: np.ndarray, thresholds: list[tuple[float, int]]) -> np.ndarray:
+    """Apply step-function scoring (like config.py threshold lists)."""
+    result = np.zeros(len(values))
+    for thresh, pts in thresholds:
+        result = np.where((values >= thresh) & (result < pts), pts, result)
+    return result
+
+
 def compute_rule_based_scores(df: pd.DataFrame) -> np.ndarray:
     """
     Approximate the 100-point screener score from test.parquet features.
+    Features are normalized 0-1; step-function thresholds mirror config.py.
 
-    Mapping to config.py scoring buckets:
-      momentum       -> Price Momentum (max 20 pts)
-      buy_sell_pressure -> Buy Pressure (max 15 pts)
-      volume_intensity  -> Volume/Liquidity ratio (max 20 pts)
-      price_range      -> Volatility proxy / Age signal (max 15 pts)
-      group2_top1_pct  -> Holder concentration (max 10 pts, lower = better)
-      group3_wash_ratio -> Wash trading signal (max 10 pts, lower = better)
-      group3_trader_num -> Market participation (max 10 pts)
+    Mapping:
+      momentum          -> Price Momentum      (max 20 pts)
+      buy_sell_pressure  -> Buy Pressure        (max 15 pts)
+      volume_intensity   -> Volume/Liq ratio    (max 20 pts)
+      price_range        -> Volatility / Age    (max 15 pts)
+      group2_top1_pct    -> Holder concentration (max 10 pts, lower = better)
+      group3_wash_ratio  -> Wash signal         (max 10 pts, lower = better)
+      group3_trader_num  -> Market participation (max 10 pts)
     """
     scores = np.zeros(len(df))
 
-    # Momentum (max 20 pts) — higher momentum = higher score
-    if "momentum" in df.columns:
-        m = pd.to_numeric(df["momentum"], errors="coerce").fillna(0).values
-        scores += np.clip(m * 20, 0, 20)
+    def _col(name: str) -> np.ndarray:
+        if name in df.columns:
+            return pd.to_numeric(df[name], errors="coerce").fillna(0).values
+        return np.zeros(len(df))
 
-    # Buy pressure (max 15 pts) — higher = more buy-side
-    if "buy_sell_pressure" in df.columns:
-        bp = pd.to_numeric(df["buy_sell_pressure"], errors="coerce").fillna(0).values
-        scores += np.clip(bp * 15, 0, 15)
+    # Momentum (max 20 pts) — step thresholds on normalized 0-1
+    scores += _step_score(_col("momentum"), [(0.05, 4), (0.10, 8), (0.20, 12), (0.40, 16), (0.60, 20)])
 
-    # Volume intensity (max 20 pts) — higher volume = more interesting
-    if "volume_intensity" in df.columns:
-        vi = pd.to_numeric(df["volume_intensity"], errors="coerce").fillna(0).values
-        scores += np.clip(vi * 20, 0, 20)
+    # Buy pressure (max 15 pts)
+    scores += _step_score(_col("buy_sell_pressure"), [(0.30, 5), (0.50, 10), (0.70, 15)])
 
-    # Price range as volatility proxy (max 15 pts)
-    if "price_range" in df.columns:
-        pr = pd.to_numeric(df["price_range"], errors="coerce").fillna(0).values
-        scores += np.clip(pr * 15, 0, 15)
+    # Volume intensity (max 20 pts)
+    scores += _step_score(_col("volume_intensity"), [(0.05, 4), (0.10, 8), (0.20, 14), (0.40, 20)])
 
-    # Holder concentration — lower top1 = healthier (max 10 pts)
-    if "group2_top1_pct" in df.columns:
-        t1 = pd.to_numeric(df["group2_top1_pct"], errors="coerce").fillna(0.5).values
-        scores += np.clip(10 * (1 - t1), 0, 10)
+    # Price range / volatility (max 15 pts)
+    scores += _step_score(_col("price_range"), [(0.20, 5), (0.50, 10), (0.80, 15)])
 
-    # Wash ratio — lower = more legitimate (max 10 pts)
-    if "group3_wash_ratio" in df.columns:
-        wr = pd.to_numeric(df["group3_wash_ratio"], errors="coerce").fillna(0.5).values
-        scores += np.clip(10 * (1 - wr), 0, 10)
+    # Holder concentration — lower top1% = healthier (max 10 pts)
+    t1 = _col("group2_top1_pct")
+    scores += np.where(t1 <= 0.05, 10, np.where(t1 <= 0.10, 7, np.where(t1 <= 0.20, 4, 0)))
 
-    # Trader count — more traders = healthier (max 10 pts)
-    if "group3_trader_num" in df.columns:
-        tn = pd.to_numeric(df["group3_trader_num"], errors="coerce").fillna(0).values
-        # Normalize: assume >100 traders = max score
-        scores += np.clip(tn / 100 * 10, 0, 10)
+    # Wash ratio — lower = more legit (max 10 pts)
+    wr = _col("group3_wash_ratio")
+    scores += np.where(wr <= 0.05, 10, np.where(wr <= 0.15, 7, np.where(wr <= 0.30, 4, 0)))
+
+    # Trader count — normalized 0-1, more = better (max 10 pts)
+    scores += _step_score(_col("group3_trader_num"), [(0.01, 3), (0.05, 6), (0.10, 10)])
 
     return scores
 
@@ -207,7 +208,7 @@ def simulate_pnl(
             trade_returns[i] = raw_gain - TOTAL_SLIPPAGE
         else:
             # False positive: not a pump — Normal loss/flat
-            raw_return = rng.normal(loc=-0.05, sigma=0.10)
+            raw_return = rng.normal(loc=-0.05, scale=0.10)
             raw_return = np.clip(raw_return, -0.20, 0.10)
             trade_returns[i] = raw_return - TOTAL_SLIPPAGE
 

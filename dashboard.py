@@ -604,6 +604,27 @@ with left_col:
 </div>
 """, unsafe_allow_html=True)
 
+    # Run Backtest button
+    st.markdown('<div class="fpanel"><div class="fpanel-title">Backtest</div>', unsafe_allow_html=True)
+    if st.button("Run Backtest", key="run_backtest_btn"):
+        with st.spinner("Running backtest..."):
+            try:
+                working_dir = str(Path(__file__).parent)
+                proc = subprocess.run(
+                    ["python", "ml/backtest.py", "--save-report"],
+                    cwd=working_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if proc.returncode == 0:
+                    st.success("Backtest complete! Switch to BACKTEST tab.")
+                else:
+                    st.error(f"Backtest failed: {proc.stderr[-200:]}")
+            except Exception as exc:
+                st.error(f"Error: {exc}")
+    st.markdown('</div>', unsafe_allow_html=True)
+
 # ─── Apply filters ────────────────────────────────────────────────────────────
 filtered: list[dict] = []
 for c in candidates:
@@ -625,8 +646,8 @@ for c in candidates:
 with main_col:
     rej_label = f"🚫 REJECTED ({len(hard_rejected)})" if hard_rejected else "🚫 REJECTED"
     ea_label  = f"🔥 LIVE ({len(filtered)})"
-    tab_live, tab_stats, tab_rejected, tab_positions, tab_rl = st.tabs(
-        [ea_label, "📊 STATS", rej_label, "💰 POSITIONS", "🤖 RL TRAINING"]
+    tab_live, tab_stats, tab_rejected, tab_positions, tab_backtest, tab_rl = st.tabs(
+        [ea_label, "📊 STATS", rej_label, "💰 POSITIONS", "📈 BACKTEST", "🤖 RL TRAINING"]
     )
 
     # ── Tab: LIVE ─────────────────────────────────────────────────────────────
@@ -884,6 +905,158 @@ with main_col:
             except Exception as e:
                 st.markdown(
                     f'<div class="nodata">Error loading trades: {e}</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ── Tab: BACKTEST ──────────────────────────────────────────────────────
+    with tab_backtest:
+        BT_RESULTS = Path(__file__).parent / "ml" / "models" / "backtest_results.json"
+        BT_CURVES  = Path(__file__).parent / "ml" / "models" / "backtest_equity_curves.json"
+
+        if not BT_RESULTS.exists():
+            st.markdown(
+                '<div class="nodata">No backtest data yet — run '
+                '<code>python ml/backtest.py</code> or click "Run Backtest" in the sidebar.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            try:
+                with open(BT_RESULTS) as f:
+                    bt_results = json.load(f)
+
+                # ── Strategy comparison table ──────────────────────────
+                st.markdown('<div class="sec-label">Strategy Comparison</div>', unsafe_allow_html=True)
+
+                if bt_results:
+                    # Find best value for each metric to highlight
+                    best_vals = {
+                        "precision":       max(r["precision"] for r in bt_results),
+                        "win_rate":        max(r["win_rate"] for r in bt_results),
+                        "total_pnl_usd":   max(r["total_pnl_usd"] for r in bt_results),
+                        "profit_factor":   max(r["profit_factor"] for r in bt_results),
+                        "max_drawdown_pct": max(r["max_drawdown_pct"] for r in bt_results),
+                        "sharpe_ratio":    max(r["sharpe_ratio"] for r in bt_results),
+                    }
+
+                    def _cell(val, best, fmt, higher_better=True):
+                        """Return styled cell: green if this is the best value."""
+                        text = fmt.format(val)
+                        is_best = abs(val - best) < 1e-9
+                        if is_best and len(bt_results) > 1:
+                            return f'<span style="color:#3fb950;font-weight:bold">{text}</span>'
+                        return text
+
+                    rows_html = ""
+                    for r in bt_results:
+                        rows_html += f"""
+<div style="display:grid;grid-template-columns:repeat(8,1fr);gap:6px;padding:6px 10px;
+            border-bottom:1px solid #1c2128;font-size:12px;align-items:center;">
+  <span class="mono" style="font-weight:bold;color:#e6edf3">{r['strategy']}</span>
+  <span class="mono">{r['n_trades']}</span>
+  <span class="mono">{_cell(r['precision'], best_vals['precision'], '{:.3f}')}</span>
+  <span class="mono">{_cell(r['win_rate'], best_vals['win_rate'], '{:.1%}')}</span>
+  <span class="mono">{_cell(r['total_pnl_usd'], best_vals['total_pnl_usd'], '${:+,.0f}')}</span>
+  <span class="mono">{_cell(r['profit_factor'], best_vals['profit_factor'], '{:.1f}')}</span>
+  <span class="mono">{_cell(r['max_drawdown_pct'], best_vals['max_drawdown_pct'], '{:+.1f}%')}</span>
+  <span class="mono">{_cell(r['sharpe_ratio'], best_vals['sharpe_ratio'], '{:.1f}')}</span>
+</div>"""
+
+                    header_html = """
+<div style="display:grid;grid-template-columns:repeat(8,1fr);gap:6px;padding:6px 10px;
+            background:#0d1117;border-radius:4px 4px 0 0;font-size:10px;color:#7d8590;
+            text-transform:uppercase;letter-spacing:0.5px;">
+  <span>Strategy</span><span>Trades</span><span>Precision</span><span>Win Rate</span>
+  <span>Total PnL</span><span>Profit Factor</span><span>Max DD</span><span>Sharpe</span>
+</div>"""
+
+                    st.markdown(
+                        f'<div style="background:#161b22;border:1px solid #21262d;border-radius:6px;overflow:hidden">'
+                        f'{header_html}{rows_html}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    # ── Equity curves chart ──────────────────────────────
+                    if BT_CURVES.exists():
+                        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+                        st.markdown('<div class="sec-label">Equity Curves</div>', unsafe_allow_html=True)
+                        try:
+                            with open(BT_CURVES) as f:
+                                curves = json.load(f)
+
+                            strategy_colors = {
+                                "rule_based":    "#7d8590",
+                                "xgb_baseline":  "#58a6ff",
+                                "xgb_tuned":     "#3fb950",
+                                "lgbm_baseline": "#d29922",
+                                "combined_vote": "#f778ba",
+                            }
+                            best_strat = max(bt_results, key=lambda r: r["total_pnl_usd"])["strategy"]
+
+                            fig_eq = go.Figure()
+                            for name, curve in curves.items():
+                                width = 3 if name == best_strat else 1.5
+                                fig_eq.add_trace(go.Scatter(
+                                    y=curve,
+                                    mode="lines",
+                                    name=name,
+                                    line=dict(
+                                        color=strategy_colors.get(name, "#58a6ff"),
+                                        width=width,
+                                    ),
+                                ))
+                            fig_eq.add_hline(
+                                y=1000, line_dash="dot",
+                                line_color="rgba(125,133,144,0.3)",
+                                annotation_text="Starting $1,000",
+                                annotation_font_color="#7d8590",
+                            )
+                            dark_plotly_layout(
+                                fig_eq,
+                                title="Cumulative PnL by Strategy (Test Set)",
+                                xaxis_title="Trade #",
+                                yaxis_title="Portfolio Value ($)",
+                            )
+                            fig_eq.update_layout(
+                                title_font=dict(color="#7d8590", size=12),
+                                height=420,
+                            )
+                            st.plotly_chart(fig_eq, use_container_width=True)
+                        except Exception:
+                            st.markdown('<div class="nodata">Error loading equity curves.</div>', unsafe_allow_html=True)
+
+                    # ── Key insights ──────────────────────────────────────
+                    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                    best = max(bt_results, key=lambda r: r["total_pnl_usd"])
+                    st.markdown(f"""
+<div class="fpanel">
+  <div class="fpanel-title">Key Insights</div>
+  <div class="mini-stat">
+    <span class="mini-stat-lbl">Best Strategy</span>
+    <span class="mini-stat-val up">{best['strategy']} (+{best['total_pnl_pct']:.1f}%)</span>
+  </div>
+  <div class="mini-stat">
+    <span class="mini-stat-lbl">Rugs Avoided</span>
+    <span class="mini-stat-val">{best['rugs_avoided']:,} / {best['rugs_total']:,} non-pumps</span>
+  </div>
+  <div class="mini-stat">
+    <span class="mini-stat-lbl">Trade Selectivity</span>
+    <span class="mini-stat-val">{best['trade_rate_pct']:.1f}% of tokens flagged</span>
+  </div>
+  <div class="mini-stat">
+    <span class="mini-stat-lbl">Final Capital</span>
+    <span class="mini-stat-val up">${best['final_capital']:,.2f}</span>
+  </div>
+</div>
+<div style="margin-top:8px;padding:10px 12px;background:rgba(210,153,34,0.08);
+            border:1px solid rgba(210,153,34,0.25);border-radius:6px;
+            color:#d29922;font-size:12px;font-family:'Courier New',monospace;">
+  &#9888; Past performance on test set does not guarantee live results. Always paper trade first.
+</div>
+""", unsafe_allow_html=True)
+
+            except Exception as e:
+                st.markdown(
+                    f'<div class="nodata">Error loading backtest data: {e}</div>',
                     unsafe_allow_html=True,
                 )
 
