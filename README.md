@@ -8,7 +8,7 @@ Scans for early meme coin pumps on Solana using the DEX Screener API and fires T
 
 ```bash
 conda env create -f environment.yml
-conda activate meme-screener
+conda activate soldar
 ```
 
 Or with pip directly:

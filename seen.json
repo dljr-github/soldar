@@ -1,0 +1,165 @@
+{
+  "9r1U43rsLHYNng9mZQ7jxLXAzdhXfmecwoQzjXhzpump": {
+    "score": 66,
+    "alerted_at": 1771462940.2337716,
+    "alert_level": "WARM"
+  },
+  "237ZELvE3ucrkFV3HbXDVmgsyFrSJTZrwt9QDqTgpump": {
+    "score": 65,
+    "alerted_at": 1771463034.8866138,
+    "alert_level": "WARM"
+  },
+  "HHwac6G389iKcRgRxiGYptddo7Ld5mcHYAtpjSeWpump": {
+    "score": 86,
+    "alerted_at": 1771463037.0096564,
+    "alert_level": "HOT"
+  },
+  "GdwqS9p2CAv94qTfae6f9tvUgRwk6iDL6Lj3EAWhpump": {
+    "score": 54,
+    "alerted_at": 1771462942.1370237,
+    "alert_level": "WATCH"
+  },
+  "E2J7YYUrUWSt3swVF4JS2xFGVWmKR62qzNRCZvF3JWtb": {
+    "score": 55,
+    "alerted_at": 1771463214.9546316,
+    "alert_level": "WATCH"
+  },
+  "8hfQBNZigyRvqEZJtuMAYHqY8REsneGFZHh2qUEPpump": {
+    "score": 67,
+    "alerted_at": 1771463215.7082975,
+    "alert_level": "WARM"
+  },
+  "6ydMmFRaNt4AHBjgvSogbBvcxnTrX3QzUe2AEzVppump": {
+    "score": 50,
+    "alerted_at": 1771463677.3786914,
+    "alert_level": "WATCH"
+  },
+  "HPpZEWMF5WUpHaMoAALGm3ztgsFuYechMqXy7XAppump": {
+    "score": 66,
+    "alerted_at": 1771464155.3010592,
+    "alert_level": "WARM",
+    "first_seen_price_change_1h": -37.65,
+    "first_seen_vol_liq": 0.66146941809474,
+    "first_seen_liq": 11112.29
+  },
+  "Jxsn9h6pdbA1PzVzNn5ctCWBkZ4yNf8jtdcmhV9pump": {
+    "score": 65,
+    "alerted_at": 1771466157.4305232,
+    "alert_level": "WARM",
+    "first_seen_price_change_1h": 269,
+    "first_seen_vol_liq": 1.9616257487114126,
+    "first_seen_liq": 32465.78
+  },
+  "2Hhzjadx5jaAqdBEjwu97mMnwD2t15TQ9EUt6jKUpump": {
+    "score": 65,
+    "alerted_at": 1771464429.0044837,
+    "alert_level": "WARM",
+    "first_seen_price_change_1h": -77.34,
+    "first_seen_vol_liq": 0.5778690547597074,
+    "first_seen_liq": 6685.39
+  },
+  "7G9cLWajEwHAsiFKQrn7XAvjDkeMed1dKM1vyWLe2oJA": {
+    "score": 66,
+    "alerted_at": 1771464702.908573,
+    "alert_level": "WARM",
+    "first_seen_price_change_1h": -56.63,
+    "first_seen_vol_liq": 1.2736418511066399,
+    "first_seen_liq": 9169.65
+  },
+  "B4KbnCjMbc9Q8syx7hqJhKbe11a7hK3xsUHp2r9mpump": {
+    "score": 71,
+    "alerted_at": 1771465337.8587809,
+    "alert_level": "WARM",
+    "first_seen_price_change_1h": -9.64,
+    "first_seen_vol_liq": 5.119151353786365,
+    "first_seen_liq": 14873.1
+  },
+  "6PiypkDZMS9vY5mKVcwLqixrchWb37XvjxN5cW5Ypump": {
+    "score": 78,
+    "alerted_at": 1771465702.7947423,
+    "alert_level": "WARM",
+    "first_seen_price_change_1h": -2.84,
+    "first_seen_vol_liq": 0.4562189612843933,
+    "first_seen_liq": 13906.02
+  },
+  "5jrzJ24Kbokskr8bcKuwiWLDg7M8Dm7ime4f5bdxpump": {
+    "score": 53,
+    "alerted_at": 1771466158.183704,
+    "alert_level": "WATCH",
+    "first_seen_price_change_1h": 9533,
+    "first_seen_vol_liq": 0.15544699622880215,
+    "first_seen_liq": 165578.69
+  },
+  "FqV9fmCVVCpfstxrG5HHkJpdt3xjn9EQn5WY1uAypump": {
+    "score": 93,
+    "alerted_at": 1771466893.9153423,
+    "alert_level": "HOT",
+    "first_seen_price_change_1h": 220,
+    "first_seen_vol_liq": 6.091371563252622,
+    "first_seen_liq": 25257.53
+  },
+  "5eYHPhfj1HSQ3jBJwz9PGx7BZqfcpo1iHfHHJ84Lpump": {
+    "score": 72,
+    "alerted_at": 1771466894.6866255,
+    "alert_level": "WARM",
+    "first_seen_price_change_1h": 42.44,
+    "first_seen_vol_liq": 1.1001990209358143,
+    "first_seen_liq": 16832.4
+  },
+  "AqWvev1buoHnh2SrZhVVMp18pypjVRDDFyN6zoPVpump": {
+    "score": 58,
+    "alerted_at": 1771467636.043546,
+    "alert_level": "WATCH",
+    "first_seen_price_change_1h": null,
+    "first_seen_vol_liq": null,
+    "first_seen_liq": null
+  },
+  "63TJso8xUiUS2XExswjktNntnJeTCpwZKX2iNjsWpump": {
+    "score": 59,
+    "alerted_at": 1771467727.4104495,
+    "alert_level": "WATCH",
+    "first_seen_price_change_1h": -78.24,
+    "first_seen_vol_liq": 1.6556649333311235,
+    "first_seen_liq": 6636.53
+  },
+  "92EEnyjuHndySBJPqCQz7yAuWfAUTL435szujoYGpump": {
+    "score": 54,
+    "alerted_at": 1771467910.1057966,
+    "alert_level": "WATCH",
+    "first_seen_price_change_1h": -41.37,
+    "first_seen_vol_liq": 0.6151132031030797,
+    "first_seen_liq": 10656.51
+  },
+  "9ZmkJqCEqMxhg3yvdzGSimixxdhPELb9PUsUQuSRpump": {
+    "score": 50,
+    "alerted_at": 1771468191.4025118,
+    "alert_level": "WATCH",
+    "first_seen_price_change_1h": 5029,
+    "first_seen_vol_liq": 0.12431307817092647,
+    "first_seen_liq": 120872.56
+  },
+  "HrFjQfrfBzWc2MGaZqCyRZyarxoNZvanYnXKJMxQpump": {
+    "score": 88,
+    "alerted_at": 1771468284.6493895,
+    "alert_level": "HOT",
+    "first_seen_price_change_1h": 155,
+    "first_seen_vol_liq": 1.6038132132890375,
+    "first_seen_liq": 22653.86
+  },
+  "4t6MhWGoW3UptagAvcPkf4i89jkF9R6F6eQnx4p8pump": {
+    "score": 52,
+    "alerted_at": 1771468557.6289217,
+    "alert_level": "WATCH",
+    "first_seen_price_change_1h": 4863,
+    "first_seen_vol_liq": 0.07138135913762912,
+    "first_seen_liq": 118628.31
+  },
+  "9ELqXmqcDgcPnrtWJ9h9mZMTmZC49pAHfuBmi9C3pump": {
+    "score": 66,
+    "alerted_at": 1771468558.3680997,
+    "alert_level": "WARM",
+    "first_seen_price_change_1h": null,
+    "first_seen_vol_liq": null,
+    "first_seen_liq": null
+  }
+}
