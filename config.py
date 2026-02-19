@@ -97,6 +97,9 @@ ALERT_LEVELS = [
     (50, "WATCH", "\U0001f7e1"),   # 🟡
 ]
 
+# Set to False to disable auto Telegram alerts (on-demand reports only)
+AUTO_ALERTS_ENABLED = False
+
 # ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------

@@ -207,10 +207,13 @@ def process_cycle(dry_run: bool = False) -> None:
                 print(f"[DRY RUN] Would send alert:")
                 print(msg)
                 print(f"{'='*60}\n")
-            else:
+                mark_seen(seen, address, score, level)
+            elif cfg.AUTO_ALERTS_ENABLED:
                 send_telegram(msg)
-
-            mark_seen(seen, address, score, level)
+                mark_seen(seen, address, score, level)
+            else:
+                log.info("AUTO_ALERTS_ENABLED=False — logged %s (score=%d, verdict=%s), no Telegram sent", base_sym, score, verdict)
+                mark_seen(seen, address, score, level)
 
     save_seen(seen)
 
