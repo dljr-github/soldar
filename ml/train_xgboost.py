@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-XGBoost baseline classifier for meme coin pump detection.
+XGBoost classifier for meme coin pump detection on real MemeTrans data.
+
 Usage:
+  # Baseline
   python ml/train_xgboost.py --train ml/data/train.parquet --val ml/data/val.parquet --test ml/data/test.parquet
+
+  # Optuna tuning
   python ml/train_xgboost.py --train ml/data/train.parquet --val ml/data/val.parquet --test ml/data/test.parquet --tune
-  python ml/train_xgboost.py  # uses ml/dataset.parquet with auto-split, or generates synthetic data
+
+  # SHAP analysis on saved model
+  python ml/train_xgboost.py --test ml/data/test.parquet --shap ml/models/xgb_tuned.pkl
 """
 
 from __future__ import annotations
@@ -41,155 +47,37 @@ from evaluate import (
 # Constants
 # ---------------------------------------------------------------------------
 MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
-MODEL_PATH = os.path.join(MODEL_DIR, "xgb_baseline.pkl")
-METRICS_PATH = os.path.join(MODEL_DIR, "xgb_metrics.json")
-IMPORTANCE_PATH = os.path.join(MODEL_DIR, "xgb_feature_importance.png")
-CM_PATH = os.path.join(MODEL_DIR, "xgb_confusion_matrix.png")
-ROC_PATH = os.path.join(MODEL_DIR, "xgb_roc_curve.png")
-
-FEATURE_COLS = [
-    "price_change_T_pct",
-    "vol_per_min_T",
-    "price_velocity",
-    "high_low_range_pct",
-    "candles_up_pct",
-    "initial_liquidity_usd",
-    "mcap_at_listing",
-    "liq_to_mcap_ratio",
-]
-
-TARGET = "pumped_2x"
-DETECTION_MINUTE = 5  # Train on T=5min snapshot
-
-
-# ---------------------------------------------------------------------------
-# Synthetic data generator
-# ---------------------------------------------------------------------------
-def generate_synthetic_data(n_samples: int = 2000, seed: int = 42) -> pd.DataFrame:
-    """Generate synthetic training data matching the MemeTrans feature schema.
-
-    Distributions are loosely based on observed meme coin patterns:
-    - Most coins don't pump (85-90% negative)
-    - Pumpers tend to have higher early volume and price velocity
-    """
-    rng = np.random.RandomState(seed)
-
-    # Base rate: ~12% pump
-    n_pump = int(n_samples * 0.12)
-    n_nopump = n_samples - n_pump
-
-    rows = []
-    for label, count in [(False, n_nopump), (True, n_pump)]:
-        for _ in range(count):
-            if label:  # Pump characteristics
-                price_change = rng.lognormal(3.0, 1.0)  # higher gains
-                vol_per_min = rng.lognormal(8.5, 1.2)    # ~5000-50000 USD/min
-                price_velocity = rng.normal(15, 10)       # positive velocity
-                hl_range = rng.lognormal(3.5, 0.8)        # wider range
-                candles_up = rng.beta(5, 2)               # mostly up candles
-                liq = rng.lognormal(10.5, 1.0)            # ~30k-100k
-                mcap = liq * rng.uniform(2, 10)
-            else:  # No-pump characteristics
-                price_change = rng.normal(0, 20)          # centered around 0
-                vol_per_min = rng.lognormal(6.5, 1.5)     # ~500-5000 USD/min
-                price_velocity = rng.normal(-2, 8)        # slightly negative
-                hl_range = rng.lognormal(2.5, 1.0)        # tighter range
-                candles_up = rng.beta(2, 3)               # mostly down candles
-                liq = rng.lognormal(9.5, 1.5)             # wider range
-                mcap = liq * rng.uniform(1, 20)
-
-            liq_mcap = liq / mcap if mcap > 0 else 0
-
-            rows.append({
-                "price_change_T_pct": price_change,
-                "vol_per_min_T": vol_per_min,
-                "price_velocity": price_velocity,
-                "high_low_range_pct": hl_range,
-                "candles_up_pct": np.clip(candles_up, 0, 1),
-                "initial_liquidity_usd": liq,
-                "mcap_at_listing": mcap,
-                "liq_to_mcap_ratio": liq_mcap,
-                "pumped_2x": label,
-                "detection_minute": DETECTION_MINUTE,
-            })
-
-    df = pd.DataFrame(rows)
-    # Shuffle
-    df = df.sample(frac=1, random_state=seed).reset_index(drop=True)
-    return df
+TARGET = "label"
+DROP_COLS = {"label", "source"}
 
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
-def load_data(
-    train_path: str | None,
-    val_path: str | None,
-    test_path: str | None,
+def load_parquet_splits(
+    train_path: str,
+    val_path: str,
+    test_path: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Load train/val/test splits. Falls back to auto-split or synthetic data."""
+    """Load pre-split parquet files, dropping source column."""
+    df_train = pd.read_parquet(train_path)
+    df_val = pd.read_parquet(val_path)
+    df_test = pd.read_parquet(test_path)
 
-    # Case 1: explicit parquet splits provided
-    if train_path and os.path.exists(train_path):
-        print(f"Loading train: {train_path}")
-        df_train = pd.read_parquet(train_path)
-        df_val = pd.read_parquet(val_path) if val_path and os.path.exists(val_path) else None
-        df_test = pd.read_parquet(test_path) if test_path and os.path.exists(test_path) else None
-
-        # Filter to detection minute
-        df_train = df_train[df_train["detection_minute"] == DETECTION_MINUTE].copy()
-        if df_val is not None:
-            df_val = df_val[df_val["detection_minute"] == DETECTION_MINUTE].copy()
-        if df_test is not None:
-            df_test = df_test[df_test["detection_minute"] == DETECTION_MINUTE].copy()
-
-        # Auto-split if val/test missing
-        if df_val is None or df_test is None:
-            df_train, df_val, df_test = _auto_split(df_train)
-
-        return df_train, df_val, df_test
-
-    # Case 2: single dataset.parquet exists — auto-split
-    dataset_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dataset.parquet")
-    if os.path.exists(dataset_path):
-        print(f"Loading single dataset: {dataset_path}")
-        df = pd.read_parquet(dataset_path)
-        df = df[df["detection_minute"] == DETECTION_MINUTE].copy()
-        if len(df) >= 20:
-            return _auto_split(df)
-        print(f"Only {len(df)} samples at T={DETECTION_MINUTE}min — too few for real training.")
-
-    # Case 3: generate synthetic data
-    print("No training data found. Generating synthetic dataset...")
-    df = generate_synthetic_data(n_samples=2000)
-    return _auto_split(df)
-
-
-def _auto_split(
-    df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Split dataframe into 70/15/15 train/val/test."""
-    y = df[TARGET].astype(int)
-
-    # Stratified split if both classes present
-    stratify = y if y.nunique() >= 2 else None
-    df_train, df_temp = train_test_split(df, test_size=0.3, random_state=42, stratify=stratify)
-
-    y_temp = df_temp[TARGET].astype(int)
-    stratify_temp = y_temp if y_temp.nunique() >= 2 else None
-    df_val, df_test = train_test_split(df_temp, test_size=0.5, random_state=42, stratify=stratify_temp)
-
-    print(f"Split: train={len(df_train)}, val={len(df_val)}, test={len(df_test)}")
+    print(f"Loaded: train={len(df_train)}, val={len(df_val)}, test={len(df_test)}")
     return df_train, df_val, df_test
 
 
-# ---------------------------------------------------------------------------
-# Feature preparation
-# ---------------------------------------------------------------------------
-def prepare_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    """Extract X, y from dataframe with proper type handling."""
-    X = df[FEATURE_COLS].copy()
-    # Convert object columns to numeric (handles None/string values from parquet)
+def get_feature_cols(df: pd.DataFrame) -> list[str]:
+    """Auto-detect feature columns (everything except label and source)."""
+    return [c for c in df.columns if c not in DROP_COLS]
+
+
+def prepare_features(
+    df: pd.DataFrame, feature_cols: list[str]
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Extract X, y with proper type handling."""
+    X = df[feature_cols].copy()
     for col in X.columns:
         X[col] = pd.to_numeric(X[col], errors="coerce")
     X = X.fillna(X.median())
@@ -205,7 +93,7 @@ def run_optuna_search(
     y_train: pd.Series,
     X_val: pd.DataFrame,
     y_val: pd.Series,
-    n_trials: int = 50,
+    n_trials: int = 30,
 ) -> dict:
     """Run Optuna hyperparameter search, return best params."""
     import optuna
@@ -227,7 +115,9 @@ def run_optuna_search(
             "gamma": trial.suggest_float("gamma", 0.0, 5.0),
             "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
             "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
-            "scale_pos_weight": trial.suggest_float("scale_pos_weight", base_spw * 0.5, base_spw * 2.0),
+            "scale_pos_weight": trial.suggest_float(
+                "scale_pos_weight", base_spw * 0.5, base_spw * 2.0
+            ),
         }
 
         clf = XGBClassifier(
@@ -237,7 +127,8 @@ def run_optuna_search(
             verbosity=0,
         )
         clf.fit(
-            X_train, y_train,
+            X_train,
+            y_train,
             eval_set=[(X_val, y_val)],
             verbose=False,
         )
@@ -259,65 +150,69 @@ def run_optuna_search(
 # ---------------------------------------------------------------------------
 # SHAP feature importance
 # ---------------------------------------------------------------------------
-def plot_shap_importance(model, X: pd.DataFrame, save_path: str) -> None:
-    """Plot SHAP feature importance and save."""
-    try:
-        import shap
+def run_shap_analysis(
+    model,
+    X: pd.DataFrame,
+    save_path: str,
+    top_n: int = 15,
+) -> None:
+    """Run SHAP analysis, save beeswarm plot and print top features."""
+    import shap
 
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X)
+    print(f"\nRunning SHAP analysis on {len(X)} samples...")
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X)
 
-        fig, ax = plt.subplots(figsize=(10, 6))
-        shap.summary_plot(shap_values, X, show=False, plot_size=None)
-        plt.tight_layout()
-        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches="tight")
-        plt.close("all")
-        print(f"SHAP feature importance saved to {save_path}")
-    except Exception as e:
-        # Fall back to built-in feature importance
-        print(f"SHAP failed ({e}), using built-in feature importance")
-        importances = model.feature_importances_
-        indices = np.argsort(importances)[::-1]
+    # Mean absolute SHAP values per feature
+    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+    feature_importance = pd.Series(mean_abs_shap, index=X.columns).sort_values(
+        ascending=False
+    )
 
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.barh(
-            range(len(importances)),
-            importances[indices],
-            color="#58a6ff",
-        )
-        ax.set_yticks(range(len(importances)))
-        ax.set_yticklabels([X.columns[i] for i in indices])
-        ax.invert_yaxis()
-        ax.set_xlabel("Feature Importance")
-        ax.set_title("XGBoost Feature Importance")
-        fig.tight_layout()
-        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        print(f"Feature importance plot saved to {save_path}")
+    print(f"\nTop {top_n} most important features (mean |SHAP|):")
+    print("-" * 50)
+    for i, (feat, val) in enumerate(feature_importance.head(top_n).items(), 1):
+        print(f"  {i:2d}. {feat:<35s} {val:.4f}")
+
+    # Save beeswarm plot
+    fig, ax = plt.subplots(figsize=(12, 8))
+    shap.summary_plot(shap_values, X, show=False, plot_size=None, max_display=top_n)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close("all")
+    print(f"SHAP importance plot saved to {save_path}")
 
 
 # ---------------------------------------------------------------------------
 # Main training function
 # ---------------------------------------------------------------------------
 def train(
-    train_path: str | None = None,
-    val_path: str | None = None,
-    test_path: str | None = None,
+    train_path: str,
+    val_path: str,
+    test_path: str,
     tune: bool = False,
 ) -> None:
     """Train XGBoost classifier with full evaluation pipeline."""
+    suffix = "tuned" if tune else "baseline"
+    model_path = os.path.join(MODEL_DIR, f"xgb_{suffix}.pkl")
+    metrics_path = os.path.join(MODEL_DIR, f"xgb_{suffix}_metrics.json" if tune else "xgb_metrics.json")
+    cm_path = os.path.join(MODEL_DIR, f"xgb_{suffix}_confusion_matrix.png")
+    roc_path = os.path.join(MODEL_DIR, f"xgb_{suffix}_roc_curve.png")
+    importance_path = os.path.join(MODEL_DIR, f"xgb_{suffix}_feature_importance.png")
+
     print("=" * 60)
-    print("XGBoost Meme Coin Pump Detector")
+    print(f"XGBoost Meme Coin Pump Detector ({suffix})")
     print("=" * 60)
 
     # Load data
-    df_train, df_val, df_test = load_data(train_path, val_path, test_path)
+    df_train, df_val, df_test = load_parquet_splits(train_path, val_path, test_path)
+    feature_cols = get_feature_cols(df_train)
+    print(f"Features ({len(feature_cols)}): {feature_cols}")
 
-    X_train, y_train = prepare_features(df_train)
-    X_val, y_val = prepare_features(df_val)
-    X_test, y_test = prepare_features(df_test)
+    X_train, y_train = prepare_features(df_train, feature_cols)
+    X_val, y_val = prepare_features(df_val, feature_cols)
+    X_test, y_test = prepare_features(df_test, feature_cols)
 
     print(f"\nClass balance (train): {y_train.value_counts().to_dict()}")
     print(f"Class balance (val):   {y_val.value_counts().to_dict()}")
@@ -327,12 +222,14 @@ def train(
     neg_count = int((y_train == 0).sum())
     pos_count = int((y_train == 1).sum())
     scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
-    print(f"scale_pos_weight: {scale_pos_weight:.2f}")
+    print(f"scale_pos_weight: {scale_pos_weight:.4f}")
 
     # Hyperparameter tuning or defaults
     if tune:
-        print("\nRunning Optuna hyperparameter search (50 trials)...")
-        best_params = run_optuna_search(X_train, y_train, X_val, y_val, n_trials=50)
+        print("\nRunning Optuna hyperparameter search (30 trials)...")
+        best_params = run_optuna_search(
+            X_train, y_train, X_val, y_val, n_trials=30
+        )
         clf = XGBClassifier(
             **best_params,
             eval_metric="logloss",
@@ -358,7 +255,8 @@ def train(
     print("\nTraining...")
     t0 = time.time()
     clf.fit(
-        X_train, y_train,
+        X_train,
+        y_train,
         eval_set=[(X_val, y_val)],
         verbose=False,
     )
@@ -378,14 +276,30 @@ def train(
 
     # Plots
     os.makedirs(MODEL_DIR, exist_ok=True)
-    plot_confusion_matrix(y_test.values, y_pred, CM_PATH)
-    auc = plot_roc_curve(y_test.values, y_proba, ROC_PATH)
-    plot_shap_importance(clf, X_test, IMPORTANCE_PATH)
+    plot_confusion_matrix(y_test.values, y_pred, cm_path)
+    auc = plot_roc_curve(y_test.values, y_proba, roc_path)
+
+    # Built-in feature importance plot
+    importances = clf.feature_importances_
+    indices = np.argsort(importances)[::-1]
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.barh(range(len(importances)), importances[indices], color="#58a6ff")
+    ax.set_yticks(range(len(importances)))
+    ax.set_yticklabels([feature_cols[i] for i in indices])
+    ax.invert_yaxis()
+    ax.set_xlabel("Feature Importance (gain)")
+    ax.set_title(f"XGBoost Feature Importance ({suffix})")
+    fig.tight_layout()
+    fig.savefig(importance_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Feature importance plot saved to {importance_path}")
 
     # Save model
-    with open(MODEL_PATH, "wb") as f:
-        pickle.dump({"model": clf, "feature_cols": FEATURE_COLS, "target": TARGET}, f)
-    print(f"\nModel saved to {MODEL_PATH}")
+    with open(model_path, "wb") as f:
+        pickle.dump(
+            {"model": clf, "feature_cols": feature_cols, "target": TARGET}, f
+        )
+    print(f"\nModel saved to {model_path}")
 
     # Save metrics
     all_metrics = {
@@ -394,9 +308,14 @@ def train(
         "model_params": clf.get_params(),
         "training_time_seconds": round(elapsed, 2),
         "best_iteration": best_iter,
-        "feature_cols": FEATURE_COLS,
+        "feature_cols": feature_cols,
+        "data": {
+            "train_rows": len(df_train),
+            "val_rows": len(df_val),
+            "test_rows": len(df_test),
+        },
     }
-    save_metrics(all_metrics, METRICS_PATH)
+    save_metrics(all_metrics, metrics_path)
 
 
 # ---------------------------------------------------------------------------
@@ -407,10 +326,36 @@ def main():
     parser.add_argument("--train", type=str, default=None, help="Path to train parquet")
     parser.add_argument("--val", type=str, default=None, help="Path to validation parquet")
     parser.add_argument("--test", type=str, default=None, help="Path to test parquet")
-    parser.add_argument("--tune", action="store_true", help="Run Optuna hyperparameter search")
+    parser.add_argument("--tune", action="store_true", help="Run Optuna hyperparameter search (30 trials)")
+    parser.add_argument("--shap", type=str, default=None, help="Path to saved model .pkl for SHAP analysis")
     args = parser.parse_args()
 
-    train(train_path=args.train, val_path=args.val, test_path=args.test, tune=args.tune)
+    # SHAP-only mode
+    if args.shap:
+        if not args.test:
+            parser.error("--test is required for SHAP analysis")
+        print("Loading model for SHAP analysis...")
+        with open(args.shap, "rb") as f:
+            bundle = pickle.load(f)
+        model = bundle["model"]
+        feature_cols = bundle["feature_cols"]
+
+        df_test = pd.read_parquet(args.test)
+        X_test, y_test = prepare_features(df_test, feature_cols)
+
+        shap_path = os.path.join(MODEL_DIR, "xgb_shap_importance.png")
+        run_shap_analysis(model, X_test, shap_path, top_n=15)
+        return
+
+    # Training mode
+    if not args.train:
+        parser.error("--train is required for training")
+    train(
+        train_path=args.train,
+        val_path=args.val,
+        test_path=args.test,
+        tune=args.tune,
+    )
 
 
 if __name__ == "__main__":
