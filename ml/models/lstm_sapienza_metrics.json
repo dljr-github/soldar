@@ -1,0 +1,29 @@
+{
+  "data_source": "sapienza",
+  "classification": {
+    "precision": 0.8077,
+    "recall": 0.84,
+    "f1": 0.8235,
+    "roc_auc": 0.8861,
+    "n_samples": 96,
+    "n_positive": 50,
+    "n_negative": 46
+  },
+  "trading": {
+    "threshold": 0.5,
+    "predicted_trades": 52,
+    "actual_pumps": 50,
+    "true_positives": 42,
+    "trade_precision": 0.8077,
+    "trade_recall": 0.84,
+    "ev_per_trade": 0.7308,
+    "coins_saved_from_rugs": 36,
+    "total_samples": 96
+  },
+  "training_time_seconds": 1.19,
+  "best_epoch": 2,
+  "best_val_loss": 0.497441,
+  "seq_len": 20,
+  "input_size": 10,
+  "device": "cpu"
+}

@@ -16,6 +16,7 @@ import argparse
 import glob
 import json
 import os
+import pickle
 import sys
 import time
 
@@ -24,8 +25,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
+from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -343,6 +346,138 @@ def normalize_sequences(
 
 
 # ---------------------------------------------------------------------------
+# Sapienza dataset loading
+# ---------------------------------------------------------------------------
+SAPIENZA_PATH = os.path.expanduser(
+    "~/repos/sapienza-dataset/labeled_features/features_15S.csv.gz"
+)
+
+SAPIENZA_FEATURES = [
+    "std_rush_order",
+    "avg_rush_order",
+    "std_trades",
+    "std_volume",
+    "avg_volume",
+    "std_price",
+    "avg_price",
+    "avg_price_max",
+    "hour_sin",
+    "hour_cos",
+]
+
+SAPIENZA_MODEL_PATH = os.path.join(MODEL_DIR, "lstm_sapienza.pt")
+SAPIENZA_CURVES_PATH = os.path.join(MODEL_DIR, "lstm_sapienza_curves.png")
+SAPIENZA_METRICS_PATH = os.path.join(MODEL_DIR, "lstm_sapienza_metrics.json")
+SAPIENZA_SCALER_PATH = os.path.join(MODEL_DIR, "lstm_sapienza_scaler.pkl")
+
+
+def load_sapienza_sequences(
+    seq_len: int = 20,
+    max_sequences: int = 100_000,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build pump/non-pump sequences from the Sapienza 15-second dataset.
+
+    Pump windows: N rows immediately before a gt 0→1 transition.
+    Non-pump windows: random N-row windows from contiguous gt=0 regions.
+
+    Returns:
+        sequences: (N_total, seq_len, 10) float array
+        labels: (N_total,) int array (0/1)
+    """
+    print(f"Loading Sapienza dataset from {SAPIENZA_PATH} ...")
+    df = pd.read_csv(SAPIENZA_PATH)
+    print(f"  {len(df):,} rows, {df['symbol'].nunique()} symbols")
+
+    feat_cols = SAPIENZA_FEATURES
+    pump_seqs: list[np.ndarray] = []
+    non_pump_seqs: list[np.ndarray] = []
+
+    for sym, grp in df.groupby("symbol"):
+        grp = grp.sort_values("date").reset_index(drop=True)
+        gt = grp["gt"].values
+        feats = grp[feat_cols].values.astype(np.float32)
+
+        # --- Pump windows: rows before each gt 0→1 transition ---
+        transitions = np.where((gt[:-1] == 0) & (gt[1:] == 1))[0]
+        for t_idx in transitions:
+            # t_idx is the last 0 before the 1; we want seq_len rows ending at t_idx
+            start = t_idx - seq_len + 1
+            if start < 0:
+                continue
+            window = feats[start : t_idx + 1]
+            if len(window) == seq_len:
+                pump_seqs.append(window)
+
+        # --- Non-pump windows: random windows from gt=0 stretches ---
+        # Find contiguous gt=0 runs
+        is_zero = gt == 0
+        # We want to sample windows of length seq_len from pure gt=0 regions
+        # Build list of valid start indices where the full window is gt=0
+        valid_starts: list[int] = []
+        run_start = None
+        for i in range(len(gt)):
+            if is_zero[i]:
+                if run_start is None:
+                    run_start = i
+            else:
+                if run_start is not None and (i - run_start) >= seq_len:
+                    # This run has enough rows; add valid starts
+                    valid_starts.extend(range(run_start, i - seq_len + 1))
+                run_start = None
+        # Handle run ending at end of array
+        if run_start is not None and (len(gt) - run_start) >= seq_len:
+            valid_starts.extend(range(run_start, len(gt) - seq_len + 1))
+
+        if not valid_starts:
+            continue
+
+        # Sample up to same number of non-pump windows as pump events for this symbol
+        n_pump_this = len(transitions)
+        rng = np.random.RandomState(hash(sym) % (2**31))
+        n_sample = min(n_pump_this * 3, len(valid_starts))  # oversample 3x, trim later
+        chosen = rng.choice(valid_starts, size=n_sample, replace=len(valid_starts) < n_sample)
+        for s in chosen:
+            window = feats[s : s + seq_len]
+            if len(window) == seq_len:
+                non_pump_seqs.append(window)
+
+    n_pump = len(pump_seqs)
+    n_non_pump = len(non_pump_seqs)
+    print(f"  Extracted {n_pump} pump sequences, {n_non_pump} non-pump sequences")
+
+    if n_pump == 0:
+        raise ValueError("No pump sequences found in Sapienza dataset")
+
+    # Balance: match non-pump count to pump count
+    rng = np.random.RandomState(42)
+    if n_non_pump > n_pump:
+        idx = rng.choice(n_non_pump, size=n_pump, replace=False)
+        non_pump_seqs = [non_pump_seqs[i] for i in idx]
+    elif n_non_pump < n_pump:
+        idx = rng.choice(n_non_pump, size=n_pump, replace=True)
+        non_pump_seqs = [non_pump_seqs[i] for i in idx]
+
+    # Combine
+    sequences = np.array(pump_seqs + non_pump_seqs, dtype=np.float32)
+    labels = np.array([1] * len(pump_seqs) + [0] * len(non_pump_seqs), dtype=np.int64)
+
+    # Subsample if over max
+    total = len(labels)
+    if total > max_sequences:
+        idx = rng.choice(total, size=max_sequences, replace=False)
+        sequences = sequences[idx]
+        labels = labels[idx]
+
+    # Shuffle
+    perm = rng.permutation(len(labels))
+    sequences = sequences[perm]
+    labels = labels[perm]
+
+    print(f"  Final: {len(labels)} sequences ({labels.sum()} pump, {len(labels) - labels.sum()} non-pump)")
+    return sequences, labels
+
+
+# ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
 def train_lstm(
@@ -609,11 +744,256 @@ def _plot_training_curves(
 
 
 # ---------------------------------------------------------------------------
+# Sapienza-specific training
+# ---------------------------------------------------------------------------
+def train_lstm_sapienza(
+    seq_len: int = 20,
+    epochs: int = 30,
+    batch_size: int = 64,
+    lr: float = 1e-3,
+    patience: int = 5,
+) -> None:
+    """Train PumpLSTM on real Sapienza 15-second time-series data."""
+    print("=" * 60)
+    print("LSTM Pump Detector — Sapienza Dataset (584K rows)")
+    print("=" * 60)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+
+    # Load sequences
+    sequences, labels = load_sapienza_sequences(seq_len=seq_len)
+
+    # Train/val/test split (70/15/15)
+    n = len(labels)
+    idx = np.random.RandomState(42).permutation(n)
+    n_train = int(0.7 * n)
+    n_val = int(0.15 * n)
+
+    train_idx = idx[:n_train]
+    val_idx = idx[n_train : n_train + n_val]
+    test_idx = idx[n_train + n_val :]
+
+    X_train, y_train = sequences[train_idx], labels[train_idx]
+    X_val, y_val = sequences[val_idx], labels[val_idx]
+    X_test, y_test = sequences[test_idx], labels[test_idx]
+
+    print(f"Split: train={len(y_train)}, val={len(y_val)}, test={len(y_test)}")
+    print(f"  Train: {y_train.sum()} pump, {len(y_train) - y_train.sum()} non-pump")
+
+    # Fit StandardScaler on train data and save
+    n_features = X_train.shape[-1]
+    flat_train = X_train.reshape(-1, n_features)
+    scaler = StandardScaler()
+    scaler.fit(flat_train)
+
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    with open(SAPIENZA_SCALER_PATH, "wb") as f:
+        pickle.dump(scaler, f)
+    print(f"Scaler saved to {SAPIENZA_SCALER_PATH}")
+
+    # Apply scaler
+    X_train = scaler.transform(X_train.reshape(-1, n_features)).reshape(X_train.shape)
+    X_val = scaler.transform(X_val.reshape(-1, n_features)).reshape(X_val.shape)
+    X_test = scaler.transform(X_test.reshape(-1, n_features)).reshape(X_test.shape)
+
+    # Class balance: weighted sampler
+    pos_count = int(y_train.sum())
+    neg_count = len(y_train) - pos_count
+    class_weights = [
+        1.0 / neg_count if neg_count > 0 else 1.0,
+        1.0 / pos_count if pos_count > 0 else 1.0,
+    ]
+    sample_weights = [class_weights[int(y)] for y in y_train]
+    sampler = WeightedRandomSampler(sample_weights, num_samples=len(y_train), replacement=True)
+
+    pos_weight = torch.tensor(
+        [neg_count / pos_count if pos_count > 0 else 1.0], device=device
+    )
+
+    # DataLoaders
+    train_ds = PumpSequenceDataset(X_train, y_train)
+    val_ds = PumpSequenceDataset(X_val, y_val)
+    test_ds = PumpSequenceDataset(X_test, y_test)
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=sampler, drop_last=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+
+    # Model: input_size=10 for Sapienza features
+    model = PumpLSTM(
+        input_size=len(SAPIENZA_FEATURES),
+        hidden_size=128,
+        num_layers=2,
+        dropout=0.3,
+    ).to(device)
+
+    print(f"\nModel parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=3,
+    )
+
+    # Training loop
+    best_val_loss = float("inf")
+    best_epoch = 0
+    train_losses: list[float] = []
+    val_losses: list[float] = []
+    val_aucs: list[float] = []
+
+    print(f"\nTraining for up to {epochs} epochs (patience={patience})...\n")
+    t0 = time.time()
+
+    for epoch in range(epochs):
+        # Train
+        model.train()
+        epoch_loss = 0.0
+        n_batches = 0
+
+        for X_batch, y_batch in train_loader:
+            X_batch = X_batch.to(device)
+            y_batch = y_batch.to(device)
+
+            logits, _ = model(X_batch)
+            loss = criterion(logits.squeeze(-1), y_batch)
+
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+
+            epoch_loss += loss.item()
+            n_batches += 1
+
+        avg_train_loss = epoch_loss / max(n_batches, 1)
+        train_losses.append(avg_train_loss)
+
+        # Validate
+        model.eval()
+        val_loss = 0.0
+        val_preds: list[float] = []
+        val_labels: list[float] = []
+        n_val_batches = 0
+
+        with torch.no_grad():
+            for X_batch, y_batch in val_loader:
+                X_batch = X_batch.to(device)
+                y_batch = y_batch.to(device)
+
+                logits, _ = model(X_batch)
+                loss = criterion(logits.squeeze(-1), y_batch)
+                val_loss += loss.item()
+                n_val_batches += 1
+
+                probs = torch.sigmoid(logits.squeeze(-1))
+                val_preds.extend(probs.cpu().numpy())
+                val_labels.extend(y_batch.cpu().numpy())
+
+        avg_val_loss = val_loss / max(n_val_batches, 1)
+        val_losses.append(avg_val_loss)
+
+        from sklearn.metrics import roc_auc_score
+
+        try:
+            val_auc = roc_auc_score(val_labels, val_preds)
+        except ValueError:
+            val_auc = 0.5
+        val_aucs.append(val_auc)
+
+        scheduler.step(avg_val_loss)
+
+        print(
+            f"Epoch {epoch + 1:3d}/{epochs} | "
+            f"Train Loss: {avg_train_loss:.4f} | "
+            f"Val Loss: {avg_val_loss:.4f} | "
+            f"Val AUC: {val_auc:.4f} | "
+            f"LR: {optimizer.param_groups[0]['lr']:.6f}"
+        )
+
+        # Early stopping
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            best_epoch = epoch + 1
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "seq_len": seq_len,
+                    "input_size": len(SAPIENZA_FEATURES),
+                    "hidden_size": 128,
+                    "num_layers": 2,
+                    "dropout": 0.3,
+                    "feature_names": SAPIENZA_FEATURES,
+                    "best_epoch": best_epoch,
+                    "best_val_loss": best_val_loss,
+                },
+                SAPIENZA_MODEL_PATH,
+            )
+        elif epoch + 1 - best_epoch >= patience:
+            print(f"\nEarly stopping at epoch {epoch + 1} (best: {best_epoch})")
+            break
+
+    elapsed = time.time() - t0
+    print(f"\nTraining complete in {elapsed:.1f}s (best epoch: {best_epoch})")
+
+    # Plot training curves
+    _plot_training_curves(train_losses, val_losses, val_aucs, SAPIENZA_CURVES_PATH)
+
+    # Load best model for evaluation
+    checkpoint = torch.load(SAPIENZA_MODEL_PATH, map_location=device, weights_only=False)
+    model.load_state_dict(checkpoint["model_state_dict"])
+
+    # Evaluate on test set
+    model.eval()
+    all_preds: list[float] = []
+    all_labels: list[float] = []
+
+    with torch.no_grad():
+        for X_batch, y_batch in test_loader:
+            X_batch = X_batch.to(device)
+            logits, _ = model(X_batch)
+            probs = torch.sigmoid(logits.squeeze(-1))
+            all_preds.extend(probs.cpu().numpy())
+            all_labels.extend(y_batch.numpy())
+
+    y_true = np.array(all_labels)
+    y_proba = np.array(all_preds)
+    y_pred = (y_proba >= 0.5).astype(int)
+
+    # Metrics
+    clf_metrics = print_classification_report(y_true, y_pred, y_proba)
+    trading_metrics = compute_trading_metrics(y_true, y_proba, threshold=0.5)
+
+    plot_confusion_matrix(
+        y_true, y_pred, os.path.join(MODEL_DIR, "lstm_sapienza_confusion_matrix.png")
+    )
+    plot_roc_curve(y_true, y_proba, os.path.join(MODEL_DIR, "lstm_sapienza_roc_curve.png"))
+
+    all_metrics = {
+        "data_source": "sapienza",
+        "classification": clf_metrics,
+        "trading": trading_metrics,
+        "training_time_seconds": round(elapsed, 2),
+        "best_epoch": best_epoch,
+        "best_val_loss": round(best_val_loss, 6),
+        "seq_len": seq_len,
+        "input_size": len(SAPIENZA_FEATURES),
+        "device": str(device),
+    }
+    save_metrics(all_metrics, SAPIENZA_METRICS_PATH)
+
+    print(f"\nModel saved to {SAPIENZA_MODEL_PATH}")
+    print(f"Scaler saved to {SAPIENZA_SCALER_PATH}")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Train LSTM pump detector")
     parser.add_argument("--data-dir", type=str, default=None, help="Directory with raw JSON pool files")
+    parser.add_argument("--data-source", type=str, default=None, choices=["sapienza"], help="Use a named dataset")
     parser.add_argument("--seq-len", type=int, default=15, help="Sequence length in minutes")
     parser.add_argument("--epochs", type=int, default=100, help="Max training epochs")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
@@ -621,14 +1001,23 @@ def main():
     parser.add_argument("--patience", type=int, default=15, help="Early stopping patience")
     args = parser.parse_args()
 
-    train_lstm(
-        data_dir=args.data_dir,
-        seq_len=args.seq_len,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        patience=args.patience,
-    )
+    if args.data_source == "sapienza":
+        train_lstm_sapienza(
+            seq_len=args.seq_len if args.seq_len != 15 else 20,
+            epochs=args.epochs if args.epochs != 100 else 30,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            patience=args.patience if args.patience != 15 else 5,
+        )
+    else:
+        train_lstm(
+            data_dir=args.data_dir,
+            seq_len=args.seq_len,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            patience=args.patience,
+        )
 
 
 if __name__ == "__main__":
