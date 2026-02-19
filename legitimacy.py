@@ -58,15 +58,16 @@ def _check_top10_concentration(rc: dict) -> float:
     return sum(h.get("pct", 0.0) for h in holders[:10])
 
 
-def _check_lp_locked(rc: dict) -> float:
-    """Returns LP locked % (0-100). Returns 0 if no market data."""
+def _check_lp_locked(rc: dict) -> float | None:
+    """Returns LP locked % (0-100), or None if no market data available."""
     markets = rc.get("markets") or []
+    pcts = []
     for m in markets:
         lp = (m.get("lp") or {})
-        pct = lp.get("lpLockedPct", 0)
+        pct = lp.get("lpLockedPct")
         if pct is not None:
-            return float(pct)
-    return 0.0
+            pcts.append(float(pct))
+    return max(pcts) if pcts else None  # None = no data, not 0%
 
 
 def _check_rugcheck_risks(rc: dict) -> tuple[int, list[str], bool]:
@@ -75,7 +76,7 @@ def _check_rugcheck_risks(rc: dict) -> tuple[int, list[str], bool]:
     risk_score from RugCheck (higher = worse).
     """
     risks = rc.get("risks") or []
-    labels = [f"{r['name']} ({r['level']})" for r in risks]
+    labels = [f"{r.get('name', 'unknown')} ({r.get('level', 'unknown')})" for r in risks]
     has_danger = any(r.get("level") == "danger" for r in risks)
     return rc.get("score", 0), labels, has_danger
 
@@ -171,7 +172,10 @@ def analyse(pair: dict[str, Any]) -> dict[str, Any] | None:
         fail_count += 1
 
     # ── Warn conditions ───────────────────────────────────────────────────────
-    if lp_locked < cfg.LEGIT_LP_LOCKED_REJECT:
+    if lp_locked is None:
+        reasons.append("⚠️ LP lock data unavailable")
+        warn_count += 1
+    elif lp_locked < cfg.LEGIT_LP_LOCKED_REJECT:
         reasons.append(f"🚨 LP only {lp_locked:.0f}% locked — rug risk")
         hard_reject = True
         fail_count += 1

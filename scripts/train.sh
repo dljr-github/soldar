@@ -22,8 +22,15 @@ done
 
 if $GPU; then
   export CUDA_VISIBLE_DEVICES=0
-  echo "🖥  GPU mode enabled"
+  # ROCm iGPU: override to nearest compiled arch (gfx1035 → gfx1030)
+  export HSA_OVERRIDE_GFX_VERSION=10.3.0
+  export ROCR_VISIBLE_DEVICES=0
+  echo "🖥  GPU mode enabled (ROCm iGPU)"
   python -c "import torch; print(f'PyTorch CUDA: {torch.cuda.is_available()} | Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"CPU\"}')"
+else
+  # Hide GPU by default — CPU is faster for our model sizes
+  export CUDA_VISIBLE_DEVICES=""
+  export HIP_VISIBLE_DEVICES=""
 fi
 
 echo "🛰 Soldar — training models (target: $TARGET)"

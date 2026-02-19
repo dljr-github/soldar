@@ -80,6 +80,9 @@ def prepare_features(
     X = df[feature_cols].copy()
     for col in X.columns:
         X[col] = pd.to_numeric(X[col], errors="coerce")
+    # TODO(audit-HIGH): Save per-column medians in model bundle so predict.py
+    # can use them at inference instead of filling NaN with 0 (train/serve skew).
+    # E.g., save {"imputer_medians": X.median().to_dict()} alongside the model.
     X = X.fillna(X.median())
     y = df[TARGET].astype(int)
     return X, y

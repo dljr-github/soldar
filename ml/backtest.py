@@ -172,6 +172,10 @@ def strategy_combined_vote(
 
 # ---------------------------------------------------------------------------
 # PnL simulation
+# TODO(audit-HIGH): Backtest does not enforce MAX_CONCURRENT_POSITIONS or
+# starting capital constraints. Equity curves overstate realistic PnL.
+# Also: each strategy uses a different RNG seed, making cross-strategy
+# comparison unreliable. Use the same seed for fair comparison.
 # ---------------------------------------------------------------------------
 def simulate_pnl(
     predictions: np.ndarray,

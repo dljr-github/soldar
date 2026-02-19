@@ -765,6 +765,9 @@ def train_lstm_sapienza(
     sequences, labels = load_sapienza_sequences(seq_len=seq_len)
 
     # Train/val/test split (70/15/15)
+    # TODO(audit-CRITICAL): Replace random permutation with temporal split.
+    # Random shuffle leaks future data from the same symbol into training.
+    # Sort sequences by symbol + time, then use chronological cutoffs.
     n = len(labels)
     idx = np.random.RandomState(42).permutation(n)
     n_train = int(0.7 * n)

@@ -1,5 +1,7 @@
 """All tunable thresholds for the meme coin screener."""
 
+import os
+
 # ---------------------------------------------------------------------------
 # Polling
 # ---------------------------------------------------------------------------
@@ -27,7 +29,8 @@ SCAM_PATTERNS = [
 # ---------------------------------------------------------------------------
 # Seen / deduplication
 # ---------------------------------------------------------------------------
-SEEN_FILE = "seen.json"
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+SEEN_FILE = os.path.join(_ROOT, "seen.json")
 SEEN_EXPIRY_HOURS = 4
 
 # ---------------------------------------------------------------------------
@@ -136,11 +139,12 @@ LIVE_TRADING_ENABLED = False
 MIN_SCORE_TO_TRADE = 80
 MAX_POSITION_SIZE_USD = 50.0
 MAX_CONCURRENT_POSITIONS = 3
-HARD_STOP_LOSS_PCT = -40.0
-MAX_DAILY_LOSS_USD = -150.0
+HARD_STOP_LOSS_PCT = -15.0  # -15% hard stop; meme coins are near-worthless by -40%
+MAX_DAILY_LOSS_USD = -150.0  # Negative value: trading blocked when daily PnL <= this
+MAX_HOLD_MINUTES = 120.0  # Hard max hold time for any position (matches RL training horizon)
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-LOG_FILE = "screener.log"
+LOG_FILE = os.path.join(_ROOT, "screener.log")
 CONSOLE_TOP_N = 10

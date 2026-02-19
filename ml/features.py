@@ -33,23 +33,6 @@ def extract_features(pool_data: dict) -> list[dict]:
     if not open_price or open_price <= 0:
         return []
 
-    # Pre-compute label data from full history
-    closes_1h = [_safe_float(c[4]) for c in ohlcv[:60] if _safe_float(c[4])]
-    closes_2h = [_safe_float(c[4]) for c in ohlcv[:120] if _safe_float(c[4])]
-
-    max_close_1h = max(closes_1h) if closes_1h else open_price
-    max_close_2h = max(closes_2h) if closes_2h else open_price
-
-    max_gain_1h_pct = (max_close_1h / open_price - 1) * 100
-    max_gain_2h_pct = (max_close_2h / open_price - 1) * 100
-
-    # Time to peak within 2h
-    if closes_2h:
-        peak_idx = closes_2h.index(max(closes_2h))
-        time_to_peak_min = peak_idx + 1
-    else:
-        time_to_peak_min = None
-
     survived_30min = len(ohlcv) >= 30
 
     # Pool-level features
@@ -69,11 +52,11 @@ def extract_features(pool_data: dict) -> list[dict]:
 
         candles_t = ohlcv[:T]
         price_at_t = _safe_float(candles_t[-1][4])
-        if not price_at_t:
+        if not price_at_t or price_at_t <= 0:
             continue
 
-        # Volume per minute
-        vols = [_safe_float(c[5], 0) for c in candles_t]
+        # Volume per minute (bounds-check candle length)
+        vols = [_safe_float(c[5] if len(c) > 5 else None, 0) for c in candles_t]
         vol_per_min = sum(vols) / T
 
         # Price velocity: rate of change over last 2 candles before T
@@ -95,6 +78,22 @@ def extract_features(pool_data: dict) -> list[dict]:
         ups = sum(1 for c in candles_t if _safe_float(c[4], 0) > _safe_float(c[1], 0))
         candles_up_pct = ups / T
 
+        # Labels computed FORWARD from detection point T (not from candle 0)
+        horizon_1h = ohlcv[T:T + 60]
+        horizon_2h = ohlcv[T:T + 120]
+        closes_1h = [_safe_float(c[4]) for c in horizon_1h if _safe_float(c[4])]
+        closes_2h = [_safe_float(c[4]) for c in horizon_2h if _safe_float(c[4])]
+        max_close_1h = max(closes_1h) if closes_1h else price_at_t
+        max_close_2h = max(closes_2h) if closes_2h else price_at_t
+        max_gain_1h_pct = (max_close_1h / price_at_t - 1) * 100
+        max_gain_2h_pct = (max_close_2h / price_at_t - 1) * 100
+
+        if closes_2h:
+            peak_idx = closes_2h.index(max(closes_2h))
+            time_to_peak_min = peak_idx + 1  # minutes after detection
+        else:
+            time_to_peak_min = None
+
         rows.append({
             "symbol": symbol,
             "pool_address": pool_address,
@@ -109,7 +108,7 @@ def extract_features(pool_data: dict) -> list[dict]:
             "initial_liquidity_usd": initial_liquidity,
             "mcap_at_listing": mcap,
             "liq_to_mcap_ratio": liq_to_mcap,
-            # Labels
+            # Labels — computed forward from T
             "max_gain_1h_pct": max_gain_1h_pct,
             "max_gain_2h_pct": max_gain_2h_pct,
             "pumped_2x": max_gain_1h_pct >= 100,

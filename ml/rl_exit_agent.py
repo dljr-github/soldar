@@ -98,6 +98,9 @@ def train(resume: bool = False, total_timesteps: int = 500_000) -> None:
     else:
         if resume:
             print("WARNING: --resume specified but no saved model found. Training from scratch.")
+        import torch as _torch
+        _device = "cuda" if _torch.cuda.is_available() else "cpu"
+        print(f"[RL] Training on device: {_device}")
         model = PPO(
             "MlpPolicy",
             env,
@@ -111,6 +114,7 @@ def train(resume: bool = False, total_timesteps: int = 500_000) -> None:
             clip_range=0.2,
             verbose=1,
             tensorboard_log=TB_DIR,
+            device=_device,
         )
 
     print(f"Training for {total_timesteps:,} timesteps...")

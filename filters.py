@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 import time
 from typing import Any
 
@@ -22,8 +23,18 @@ def _load_seen() -> dict[str, Any]:
 
 
 def _save_seen(seen: dict[str, Any]) -> None:
-    with open(cfg.SEEN_FILE, "w") as f:
-        json.dump(seen, f, indent=2)
+    """Atomically write seen.json via tempfile + os.replace."""
+    dir_ = os.path.dirname(os.path.abspath(cfg.SEEN_FILE)) or "."
+    os.makedirs(dir_, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=dir_, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(seen, f, indent=2)
+        os.replace(tmp, cfg.SEEN_FILE)
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 def purge_expired(seen: dict[str, Any]) -> dict[str, Any]:
@@ -38,9 +49,7 @@ def purge_expired(seen: dict[str, Any]) -> dict[str, Any]:
 
 def load_seen() -> dict[str, Any]:
     seen = _load_seen()
-    seen = purge_expired(seen)
-    _save_seen(seen)
-    return seen
+    return purge_expired(seen)  # don't write here; save_seen at end of cycle
 
 
 def save_seen(seen: dict[str, Any]) -> None:

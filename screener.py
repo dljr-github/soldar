@@ -11,7 +11,7 @@ import signal
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
@@ -60,7 +60,7 @@ signal.signal(signal.SIGTERM, _handle_signal)
 # Paper / live trading
 # ---------------------------------------------------------------------------
 _position_manager = PositionManager()
-_paper_trader = PaperTrader() if cfg.PAPER_TRADING_ENABLED else None
+_paper_trader = PaperTrader(position_manager=_position_manager) if cfg.PAPER_TRADING_ENABLED else None
 
 # ---------------------------------------------------------------------------
 # Outcome tracker (ML training labels)
@@ -219,7 +219,7 @@ def _write_state(
         pc = pair.get("priceChange") or {}
         txns_5m = (pair.get("txns") or {}).get("m5") or {}
         vol = pair.get("volume") or {}
-        vol_liq = round(vol.get("h1", 0) / liq, 1) if liq else 0
+        vol_liq = round(_get_vol_liq_ratio(pair), 2)
 
         level_info = _get_level(result["score"])
         level = level_info[0] if level_info else None
@@ -290,7 +290,6 @@ def _write_state(
     all_rejected = all_rejected[-50:]
 
     # Merge exit alerts — keep from prior state if no new ones this cycle
-    from datetime import timedelta
     current_exits = exit_alerts if exit_alerts else []
     prior_exits = prior.get("exit_alerts", [])
     # Replace with current cycle's alerts; keep prior ones that aren't superseded
@@ -475,12 +474,17 @@ def process_cycle(dry_run: bool = False) -> None:
                 log.info("Cannot open position for %s: %s", base_sym, reason)
 
     # --- Update open position prices and check stop losses ---
+    triggered_ids: set[int] = set()
     if _paper_trader is not None:
         _paper_trader.update_all_prices()
         triggered = _position_manager.check_stop_losses()
         for pos in triggered:
-            sell_result = _paper_trader.simulate_sell(pos["id"], reason="stop_loss")
+            stop_price = pos["current_price"]  # use trigger price, not a second fetch
+            sell_result = _paper_trader.simulate_sell(
+                pos["id"], reason="stop_loss", forced_price=stop_price,
+            )
             if sell_result["success"]:
+                triggered_ids.add(pos["id"])
                 log.warning(
                     "STOP LOSS CLOSED #%d %s: PnL $%.2f (%.1f%%)",
                     pos["id"], pos["symbol"], sell_result["pnl_usd"], sell_result["pnl_pct"],
@@ -489,12 +493,17 @@ def process_cycle(dry_run: bool = False) -> None:
     # --- RL agent exit decisions for open positions ---
     if _paper_trader is not None:
         for pos in _position_manager.get_open_positions():
+            if pos["id"] in triggered_ids:
+                continue  # Already attempted stop-loss; don't let RL override
             current_price = get_current_price(pos["token_mint"])
             if current_price:
                 _position_manager.update_price(pos["id"], current_price)
                 action = _position_manager.get_rl_exit_action(pos["id"], current_price)
                 if action != "hold":
-                    exit_pct = {"exit_25": 25, "exit_50": 50, "exit_all": 100}[action]
+                    exit_pct = {"exit_25": 25, "exit_50": 50, "exit_all": 100}.get(action)
+                    if exit_pct is None:
+                        log.warning("Unknown RL action %r for pos %s, skipping", action, pos["symbol"])
+                        continue
                     rl_model_path = os.path.join(
                         os.path.dirname(os.path.abspath(__file__)),
                         "ml", "models", "ppo_exit_agent.zip",

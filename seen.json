@@ -1,24 +1,4 @@
 {
-  "9r1U43rsLHYNng9mZQ7jxLXAzdhXfmecwoQzjXhzpump": {
-    "score": 66,
-    "alerted_at": 1771462940.2337716,
-    "alert_level": "WARM"
-  },
-  "237ZELvE3ucrkFV3HbXDVmgsyFrSJTZrwt9QDqTgpump": {
-    "score": 65,
-    "alerted_at": 1771463034.8866138,
-    "alert_level": "WARM"
-  },
-  "HHwac6G389iKcRgRxiGYptddo7Ld5mcHYAtpjSeWpump": {
-    "score": 86,
-    "alerted_at": 1771463037.0096564,
-    "alert_level": "HOT"
-  },
-  "GdwqS9p2CAv94qTfae6f9tvUgRwk6iDL6Lj3EAWhpump": {
-    "score": 54,
-    "alerted_at": 1771462942.1370237,
-    "alert_level": "WATCH"
-  },
   "E2J7YYUrUWSt3swVF4JS2xFGVWmKR62qzNRCZvF3JWtb": {
     "score": 55,
     "alerted_at": 1771463214.9546316,

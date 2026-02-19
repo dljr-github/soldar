@@ -514,6 +514,12 @@ def step6_unified_dataset(
     print(f"  Label distribution:\n{combined['label'].value_counts().to_string()}")
 
     # --- Stratified train/val/test split: 70/15/15 ---
+    # TODO(audit-CRITICAL): Replace random split with temporal split for time-series
+    # data. Random splitting leaks future information into training (especially for
+    # Sapienza windows from the same symbol). Use chronological ordering or a date-
+    # based cutoff instead. Current test metrics (F1, AUC) are inflated.
+    # Also: fit a single MinMaxScaler on combined data instead of separate per-source
+    # scalers (lines ~490-501) — currently aligned features are non-comparable.
     # First split: 70% train, 30% temp
     train_df, temp_df = train_test_split(
         combined, test_size=0.30, random_state=42,

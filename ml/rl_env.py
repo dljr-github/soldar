@@ -29,7 +29,11 @@ class MemeExitEnv(gym.Env):
         self.action_space = gym.spaces.Discrete(4)
 
         # [price_ratio, time_held_norm, vol_ratio, buy_sell_ratio,
-        #  unrealized_pnl, momentum_5m]
+        #  realized_pnl, momentum_5m]
+        # TODO(audit-MEDIUM): buy_sell_ratio is always 0.5 in training data (rl_data.py).
+        # Feed actual buy/sell ratios from DexScreener to make this feature useful.
+        # Also: time penalty (0.0005/step) is too small vs appreciation — agent
+        # can rationally hold until force-close. Consider increasing to ~0.005.
         self.observation_space = gym.spaces.Box(
             low=np.array([0.0, 0.0, 0.0, 0.0, -2.0, -1.0], dtype=np.float32),
             high=np.array([20.0, 1.0, 10.0, 1.0, 20.0, 5.0], dtype=np.float32),

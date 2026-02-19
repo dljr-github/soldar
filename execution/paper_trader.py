@@ -38,8 +38,8 @@ def _fetch_price(token_mint: str) -> float | None:
 class PaperTrader:
     """Simulates buys and sells using live prices with simulated slippage."""
 
-    def __init__(self) -> None:
-        self.pm = PositionManager()
+    def __init__(self, position_manager: PositionManager | None = None) -> None:
+        self.pm = position_manager or PositionManager()
 
     def simulate_buy(
         self,
@@ -87,15 +87,15 @@ class PaperTrader:
         }
 
     def simulate_sell(
-        self, position_id: int, pct: float = 100.0, reason: str = "manual"
+        self, position_id: int, pct: float = 100.0, reason: str = "manual",
+        forced_price: float | None = None,
     ) -> dict:
         """Simulate a sell with live price and random slippage."""
-        positions = self.pm.get_open_positions()
-        pos = next((p for p in positions if p["id"] == position_id), None)
-        if not pos:
+        pos = self.pm.get_position(position_id)
+        if not pos or pos.get("status") != "open":
             return {"success": False, "error": f"Position {position_id} not found or not open"}
 
-        price = _fetch_price(pos["token_mint"])
+        price = forced_price or _fetch_price(pos["token_mint"])
         if price is None or price <= 0:
             log.error("Cannot paper sell #%d — no price available", position_id)
             return {"success": False, "error": "No price available"}

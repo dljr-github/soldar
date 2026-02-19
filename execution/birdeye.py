@@ -80,9 +80,11 @@ def get_token_holders(address: str) -> dict[str, Any] | None:
 
     holder_count = overview.get("holder", 0)
 
-    # Top holders endpoint (if available on free tier)
+    # TODO(audit-HIGH): This calls top_traders endpoint, not top_holders.
+    # The returned "balance_usd" is actually 24h buy volume, not token balance.
+    # Either use a proper holder endpoint or rename to get_top_traders.
     top_data = _get(
-        f"/defi/v2/tokens/top_traders",
+        "/defi/v2/tokens/top_traders",
         params={"address": address, "time_frame": "24h"},
     )
     top_holders = []
@@ -91,7 +93,7 @@ def get_token_holders(address: str) -> dict[str, Any] | None:
         for item in items[:10]:
             top_holders.append({
                 "address": item.get("address", ""),
-                "balance_usd": item.get("volume_buy_usd", 0),
+                "balance_usd": item.get("volume_buy_usd", 0),  # misleading name; is buy volume
             })
 
     return {

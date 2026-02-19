@@ -61,7 +61,7 @@
     "validate_parameters": null,
     "verbosity": 0
   },
-  "training_time_seconds": 0.69,
+  "training_time_seconds": 0.67,
   "best_iteration": 499,
   "feature_cols": [
     "volume_intensity",
